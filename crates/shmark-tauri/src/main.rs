@@ -5,8 +5,15 @@ use anyhow::{anyhow, Result};
 use serde_json::Value;
 use shmark_core::{paths, AppState};
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+use tauri::{
+    image::Image,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+    Emitter, Manager, WindowEvent,
+};
 use tracing::{info, warn};
+
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-icon.png");
 
 struct ShmarkAppState {
     inner: Arc<AppState>,
@@ -117,9 +124,68 @@ fn main() {
                 Ok::<_, anyhow::Error>(())
             })
             .map_err(|e| -> Box<dyn std::error::Error> { format!("{e:#}").into() })?;
+
+            // Tray icon: persistent menu-bar entry. The main window
+            // hide-on-close behavior is wired on the WindowEvent below; this
+            // is what keeps the daemon reachable after the user closes the
+            // window without quitting the process.
+            build_tray(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![rpc])
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Hide instead of close — the daemon stays alive in the
+                // tray. "Quit" from the tray menu is the way out.
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("run tauri app");
+}
+
+fn build_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> Result<(), Box<dyn std::error::Error>> {
+    let open_item = MenuItem::with_id(app, "tray-open", "Open shmark", true, None::<&str>)?;
+    let share_item = MenuItem::with_id(
+        app,
+        "tray-share",
+        "Share from clipboard",
+        true,
+        None::<&str>,
+    )?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit_item = MenuItem::with_id(app, "tray-quit", "Quit shmark", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open_item, &share_item, &separator, &quit_item])?;
+
+    let icon = Image::from_bytes(TRAY_ICON_PNG)?;
+
+    TrayIconBuilder::with_id("main")
+        .icon(icon)
+        .icon_as_template(true)
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "tray-open" => focus_main(app),
+            "tray-share" => {
+                focus_main(app);
+                if let Err(e) = app.emit("shmark://hotkey/share", ()) {
+                    warn!(error = ?e, "failed to emit share event from tray");
+                }
+            }
+            "tray-quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
+fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }
