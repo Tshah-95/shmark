@@ -21,6 +21,10 @@ enum Command {
     #[command(subcommand)]
     Daemon(commands::daemon::DaemonCmd),
 
+    /// Devices (multi-device pairing for one identity).
+    #[command(subcommand)]
+    Devices(commands::devices::DevicesCmd),
+
     /// Groups (DM-style containers for shares).
     #[command(subcommand)]
     Groups(commands::groups::GroupsCmd),
@@ -41,6 +45,7 @@ fn main() -> Result<()> {
         match cli.command {
             Command::Identity(c) => commands::identity::run(c).await,
             Command::Daemon(c) => commands::daemon::run(c).await,
+            Command::Devices(c) => commands::devices::run(c).await,
             Command::Groups(c) => commands::groups::run(c).await,
             Command::Share(args) => commands::shares::run_share(args).await,
             Command::Shares(c) => commands::shares::run_shares(c).await,

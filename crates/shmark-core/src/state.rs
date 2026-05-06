@@ -1,6 +1,7 @@
 use crate::dev::DevSender;
 use crate::groups::Groups;
 use crate::node::Node;
+use crate::pairing::PairingHost;
 use crate::settings::Settings;
 use crate::shares::Shares;
 use crate::{now_secs, Device, Identity};
@@ -25,6 +26,9 @@ pub struct AppState {
     /// Set by shmark-tauri (and only shmark-tauri). When `None`, dev_*
     /// dispatch methods return an error.
     pub dev_tx: Option<DevSender>,
+    /// Tracks one-shot pairing tokens. Same handle is referenced by the
+    /// PairProtocol on the iroh router.
+    pub pairing: Arc<PairingHost>,
 }
 
 impl AppState {
@@ -43,8 +47,17 @@ impl AppState {
 
         let identity = Identity::load_or_create(&identity_path, default_display_name)?;
         let device = Device::load_or_create(&device_path, &identity)?;
+        let identity_arc = Arc::new(identity);
+        let pairing = PairingHost::new();
 
-        let node = Node::boot(device.iroh_secret.clone(), &data_dir).await?;
+        let node = Node::boot(
+            device.iroh_secret.clone(),
+            &data_dir,
+            identity_arc.clone(),
+            pairing.clone(),
+            groups_state_path.clone(),
+        )
+        .await?;
 
         // The default author is created on first boot inside iroh-docs and
         // persists across restarts via Docs::persistent. We use it as this
@@ -58,9 +71,11 @@ impl AppState {
         let shares = Shares::new(node.clone(), author);
         let settings = Settings::load_or_default()?;
 
+        let device_arc = Arc::new(device);
+
         Ok(Self {
-            identity: Arc::new(identity),
-            device: Arc::new(device),
+            identity: identity_arc,
+            device: device_arc,
             node,
             author,
             groups: Arc::new(RwLock::new(groups)),
@@ -70,6 +85,7 @@ impl AppState {
             started_at: now_secs(),
             shutdown: Arc::new(Notify::new()),
             dev_tx,
+            pairing,
         })
     }
 

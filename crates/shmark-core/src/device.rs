@@ -9,14 +9,14 @@ use std::path::Path;
 /// The unsigned cert body. Order of fields must remain stable — the signature
 /// is over the JSON serialization of this struct, and serde_json preserves
 /// declaration order.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeviceCert {
     pub identity_pubkey_hex: String,
     pub node_pubkey_hex: String,
     pub created_at: u64,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SignedDeviceCert {
     pub cert: DeviceCert,
     pub signature_hex: String,
@@ -129,5 +129,23 @@ impl Device {
             dev.save(path)?;
             Ok(dev)
         }
+    }
+
+    /// Replace this device's cert (e.g. after a multi-device pair where
+    /// the new identity signs a fresh cert for the device's existing
+    /// iroh node key). Verifies the cert before swapping.
+    pub fn replace_cert(&mut self, cert: SignedDeviceCert) -> Result<()> {
+        cert.verify().context("verify replacement cert")?;
+        // Sanity: the cert must be for THIS device's node pubkey.
+        let expected = hex::encode(self.node_pubkey_bytes());
+        if cert.cert.node_pubkey_hex != expected {
+            return Err(anyhow::anyhow!(
+                "cert's node_pubkey {} does not match this device's {}",
+                cert.cert.node_pubkey_hex,
+                expected
+            ));
+        }
+        self.cert = cert;
+        Ok(())
     }
 }

@@ -3,6 +3,7 @@ pub mod device;
 pub mod groups;
 pub mod identity;
 pub mod node;
+pub mod pairing;
 pub mod paths;
 pub mod resolve;
 pub mod settings;

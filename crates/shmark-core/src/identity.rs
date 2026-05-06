@@ -88,6 +88,26 @@ impl Identity {
         self.signing_key.sign(msg)
     }
 
+    /// Reconstruct an Identity from a received secret + metadata. Used when
+    /// completing a multi-device pairing — Device B receives Device A's
+    /// identity over the wire and persists it locally.
+    pub fn from_received_secret(
+        secret_hex: &str,
+        display_name: String,
+        created_at: u64,
+    ) -> Result<Self> {
+        let bytes = hex::decode(secret_hex).context("decode received identity secret")?;
+        let bytes: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .context("identity secret must be 32 bytes")?;
+        Ok(Self {
+            signing_key: SigningKey::from_bytes(&bytes),
+            display_name,
+            created_at,
+        })
+    }
+
     pub fn verify(pubkey_bytes: &[u8; 32], msg: &[u8], signature: &Signature) -> Result<()> {
         let vk = VerifyingKey::from_bytes(pubkey_bytes).context("invalid identity pubkey")?;
         vk.verify(msg, signature).context("identity signature invalid")?;

@@ -1,10 +1,12 @@
+use crate::identity::Identity;
+use crate::pairing::{PairProtocol, PairingHost, PAIR_ALPN};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use iroh::{endpoint::presets, protocol::Router, Endpoint, SecretKey};
 use iroh_blobs::{store::fs::FsStore, BlobsProtocol, ALPN as BLOBS_ALPN};
 use iroh_docs::{protocol::Docs, ALPN as DOCS_ALPN};
 use iroh_gossip::{net::Gossip, ALPN as GOSSIP_ALPN};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -21,8 +23,17 @@ pub struct Node {
 }
 
 impl Node {
-    /// Build the full iroh stack with persistent on-disk state.
-    pub async fn boot(secret_key: SecretKey, data_dir: &Path) -> Result<Self> {
+    /// Build the full iroh stack with persistent on-disk state. Requires
+    /// the identity and pairing host so the pair protocol can be installed
+    /// before the router spawns (iroh::Router doesn't allow late
+    /// registration).
+    pub async fn boot(
+        secret_key: SecretKey,
+        data_dir: &Path,
+        identity: Arc<Identity>,
+        pairing: Arc<PairingHost>,
+        groups_state_path: PathBuf,
+    ) -> Result<Self> {
         let blobs_dir = data_dir.join("blobs");
         let docs_dir = data_dir.join("docs");
         std::fs::create_dir_all(&blobs_dir)
@@ -48,10 +59,18 @@ impl Node {
             .await
             .context("spawn iroh-docs")?;
 
+        let pair_proto = PairProtocol {
+            host: pairing,
+            identity,
+            docs: docs.clone(),
+            groups_state_path,
+        };
+
         let router = Router::builder(endpoint.clone())
             .accept(BLOBS_ALPN, BlobsProtocol::new(blobs.as_ref(), None))
             .accept(GOSSIP_ALPN, gossip.clone())
             .accept(DOCS_ALPN, docs.clone())
+            .accept(PAIR_ALPN, pair_proto)
             .spawn();
 
         let node = Self {
@@ -62,11 +81,6 @@ impl Node {
             router,
         };
 
-        // Resume live sync for every locally-known doc. Without this, a doc
-        // created by us (or imported in a prior run) is in "passive" mode —
-        // peers can connect to us but our replica won't actively chase
-        // updates from them. Calling start_sync with no extra peers tells the
-        // engine to subscribe to gossip and accept sync sessions for this doc.
         node.resume_sync_all().await;
 
         Ok(node)

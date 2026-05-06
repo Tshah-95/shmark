@@ -8,7 +8,10 @@ use iroh_docs::DocTicket;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use shmark_core::{
-    dev::DevRequest, groups::make_local_group, AppState, LocalGroup,
+    dev::DevRequest,
+    groups::make_local_group,
+    pairing::{pair_join, PairCode},
+    AppState, LocalGroup,
 };
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -272,6 +275,100 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
             };
             let written = state.shares.download(&group, &p.share_id, &dest).await?;
             Ok(json!({ "dest": written.display().to_string() }))
+        }
+
+        "devices_pair_create" => {
+            // Wait for the endpoint to be reachable through a relay before
+            // capturing its address. Without `online()`, addr() may return
+            // an EndpointAddr with no relay URL or direct addresses,
+            // making the resulting code unusable.
+            state
+                .node
+                .endpoint
+                .online()
+                .await;
+            let token = state.pairing.mint_token().await;
+            let addr = state.node.endpoint.addr();
+            let pc = PairCode { addr, token };
+            let code = pc.encode()?;
+            Ok(json!({
+                "code": code,
+                "expires_in_secs": shmark_core::pairing::TOKEN_TTL.as_secs(),
+            }))
+        }
+
+        "devices_pair_join" => {
+            // Dial the existing device, receive its identity payload, persist
+            // locally, import groups, then signal shutdown so the daemon
+            // re-boots with the new identity in effect.
+            #[derive(Deserialize)]
+            struct P {
+                code: String,
+                #[serde(default)]
+                display_name: Option<String>,
+            }
+            let p: P = serde_json::from_value(params)?;
+
+            let display_name = p
+                .display_name
+                .unwrap_or_else(|| state.identity.display_name.clone());
+            let resp = pair_join(
+                &state.node.endpoint,
+                &p.code,
+                state.device.node_pubkey_hex(),
+                display_name,
+            )
+            .await?;
+
+            // Persist new identity over our existing one.
+            let new_identity = shmark_core::Identity::from_received_secret(
+                &resp.identity_secret_hex,
+                resp.identity_display_name.clone(),
+                resp.identity_created_at,
+            )?;
+            new_identity.save(&shmark_core::paths::identity_path()?)?;
+
+            // Build new device record (existing iroh_secret + new cert) and
+            // persist.
+            let mut device_clone =
+                shmark_core::Device::load(&shmark_core::paths::device_path()?)?;
+            device_clone.replace_cert(resp.signed_cert.clone())?;
+            device_clone.save(&shmark_core::paths::device_path()?)?;
+
+            // Import each group via its ticket.
+            let mut imported_aliases = Vec::new();
+            for gt in &resp.group_tickets {
+                let ticket = iroh_docs::DocTicket::from_str(gt.ticket.trim())
+                    .map_err(|e| anyhow!("invalid ticket for {}: {e}", gt.local_alias))?;
+                let doc = state.node.docs.import(ticket).await?;
+                let ns_id = doc.id().to_string();
+                let _ = doc.close().await;
+                let local = make_local_group(ns_id, gt.local_alias.clone(), false);
+                state.groups.write().await.upsert(local)?;
+                imported_aliases.push(gt.local_alias.clone());
+            }
+
+            // Tell the daemon to shut down so the in-process state (which
+            // still holds the old identity in Arc<Identity>) is replaced on
+            // next launch.
+            state.signal_shutdown();
+
+            Ok(json!({
+                "identity_pubkey": resp.identity_pubkey_hex,
+                "imported_groups": imported_aliases,
+                "restart_required": true,
+            }))
+        }
+
+        "devices_list" => {
+            // v0: just this device. v1 extends with all paired devices once
+            // we have a self-doc replicating the cert chain across devices.
+            Ok(json!([{
+                "node_pubkey": state.device.node_pubkey_hex(),
+                "identity_pubkey": state.identity.pubkey_hex(),
+                "cert_created_at": state.device.cert.cert.created_at,
+                "is_this_device": true,
+            }]))
         }
 
         // Test-driver bridge — only available when shmark-tauri has
