@@ -1,3 +1,4 @@
+pub mod dev;
 pub mod device;
 pub mod groups;
 pub mod identity;

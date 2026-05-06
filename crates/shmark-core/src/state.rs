@@ -1,3 +1,4 @@
+use crate::dev::DevSender;
 use crate::groups::Groups;
 use crate::node::Node;
 use crate::settings::Settings;
@@ -21,10 +22,20 @@ pub struct AppState {
     pub settings_changed: Arc<Notify>,
     pub started_at: u64,
     pub shutdown: Arc<Notify>,
+    /// Set by shmark-tauri (and only shmark-tauri). When `None`, dev_*
+    /// dispatch methods return an error.
+    pub dev_tx: Option<DevSender>,
 }
 
 impl AppState {
     pub async fn boot(default_display_name: &str) -> Result<Self> {
+        Self::boot_with_dev(default_display_name, None).await
+    }
+
+    pub async fn boot_with_dev(
+        default_display_name: &str,
+        dev_tx: Option<DevSender>,
+    ) -> Result<Self> {
         let data_dir = crate::paths::ensure_data_dir()?;
         let identity_path = crate::paths::identity_path()?;
         let device_path = crate::paths::device_path()?;
@@ -58,6 +69,7 @@ impl AppState {
             settings_changed: Arc::new(Notify::new()),
             started_at: now_secs(),
             shutdown: Arc::new(Notify::new()),
+            dev_tx,
         })
     }
 

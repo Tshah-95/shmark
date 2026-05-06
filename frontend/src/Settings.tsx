@@ -69,6 +69,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     <div
       className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
       onClick={onClose}
+      data-shmark-modal="settings"
     >
       <div
         className="w-full max-w-2xl rounded-lg border border-zinc-800 bg-zinc-950 p-5 shadow-xl max-h-[90vh] overflow-y-auto"

@@ -19,3 +19,7 @@ base64.workspace = true
 iroh-docs.workspace = true
 
 shmark-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serial_test = "3"

@@ -7,9 +7,12 @@ use iroh_docs::api::protocol::{AddrInfoOptions, ShareMode};
 use iroh_docs::DocTicket;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use shmark_core::{groups::make_local_group, AppState, LocalGroup};
+use shmark_core::{
+    dev::DevRequest, groups::make_local_group, AppState, LocalGroup,
+};
 use std::path::PathBuf;
 use std::str::FromStr;
+use tokio::sync::oneshot;
 
 pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<Value> {
     match method {
@@ -269,6 +272,96 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
             };
             let written = state.shares.download(&group, &p.share_id, &dest).await?;
             Ok(json!({ "dest": written.display().to_string() }))
+        }
+
+        // Test-driver bridge — only available when shmark-tauri has
+        // installed a DevSender. The standalone CLI daemon returns an error.
+        "dev_emit" => {
+            #[derive(Deserialize)]
+            struct P {
+                event: String,
+                #[serde(default)]
+                payload: Value,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let tx = state
+                .dev_tx
+                .as_ref()
+                .ok_or_else(|| anyhow!("dev_* methods require shmark-desktop"))?;
+            let (reply, rx) = oneshot::channel();
+            tx.send(DevRequest::Emit {
+                event: p.event,
+                payload: p.payload,
+                reply,
+            })
+            .map_err(|_| anyhow!("dev consumer disconnected"))?;
+            rx.await
+                .map_err(|_| anyhow!("dev consumer dropped reply"))?
+                .map_err(|e| anyhow!("dev_emit: {e}"))?;
+            Ok(json!({ "ok": true }))
+        }
+
+        "dev_window_state" => {
+            let tx = state
+                .dev_tx
+                .as_ref()
+                .ok_or_else(|| anyhow!("dev_* methods require shmark-desktop"))?;
+            let (reply, rx) = oneshot::channel();
+            tx.send(DevRequest::WindowState { reply })
+                .map_err(|_| anyhow!("dev consumer disconnected"))?;
+            let v = rx
+                .await
+                .map_err(|_| anyhow!("dev consumer dropped reply"))?
+                .map_err(|e| anyhow!("dev_window_state: {e}"))?;
+            Ok(v)
+        }
+
+        "dev_run" => {
+            #[derive(Deserialize)]
+            struct P {
+                js: String,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let tx = state
+                .dev_tx
+                .as_ref()
+                .ok_or_else(|| anyhow!("dev_* methods require shmark-desktop"))?;
+            let (reply, rx) = oneshot::channel();
+            tx.send(DevRequest::RunJs {
+                js: p.js,
+                reply,
+            })
+            .map_err(|_| anyhow!("dev consumer disconnected"))?;
+            rx.await
+                .map_err(|_| anyhow!("dev consumer dropped reply"))?
+                .map_err(|e| anyhow!("dev_run: {e}"))?;
+            Ok(json!({ "ok": true }))
+        }
+
+        "dev_run_get" => {
+            #[derive(Deserialize)]
+            struct P {
+                js: String,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let tx = state
+                .dev_tx
+                .as_ref()
+                .ok_or_else(|| anyhow!("dev_* methods require shmark-desktop"))?;
+            let (reply, rx) = oneshot::channel();
+            tx.send(DevRequest::RunJsGet {
+                js: p.js,
+                reply,
+            })
+            .map_err(|_| anyhow!("dev consumer disconnected"))?;
+            let s = rx
+                .await
+                .map_err(|_| anyhow!("dev consumer dropped reply"))?
+                .map_err(|e| anyhow!("dev_run_get: {e}"))?;
+            // The webview returns a JSON string. Try to parse it; if it's
+            // not valid JSON, return the raw string.
+            let value = serde_json::from_str::<Value>(&s).unwrap_or(Value::String(s));
+            Ok(json!({ "value": value }))
         }
 
         other => Err(anyhow!("unknown method: {other}")),

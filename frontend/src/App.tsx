@@ -110,6 +110,7 @@ export function App() {
               onClick={() => setShowCreate(true)}
               className="text-xs text-zinc-400 hover:text-zinc-100"
               title="new group"
+              data-testid="sidebar-new-group"
             >
               + new
             </button>
@@ -117,6 +118,7 @@ export function App() {
               onClick={() => setShowJoin(true)}
               className="text-xs text-zinc-400 hover:text-zinc-100"
               title="join via code"
+              data-testid="sidebar-join-group"
             >
               join
             </button>
@@ -143,6 +145,7 @@ export function App() {
                     ? "bg-zinc-800 text-zinc-50"
                     : "text-zinc-300 hover:bg-zinc-800/60"
                 }`}
+                data-testid={`group-${g.local_alias}`}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate">{g.local_alias}</span>
@@ -157,6 +160,7 @@ export function App() {
           <button
             onClick={() => setShowSettings(true)}
             className="mt-2 text-left rounded px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 border-t border-zinc-800/60 pt-2"
+            data-testid="sidebar-settings"
           >
             ⚙ Settings
           </button>
@@ -313,6 +317,7 @@ function GroupView({
           <button
             onClick={() => void copyShareCode()}
             className="text-sm rounded border border-zinc-700 hover:bg-zinc-800 px-3 py-1.5"
+            data-testid="copy-share-code"
           >
             Copy share code
           </button>
@@ -386,7 +391,7 @@ function CreateGroupModal({
   }
 
   return (
-    <Modal title="New group" onClose={onClose}>
+    <Modal title="New group" testid="create-group" onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="text-xs text-zinc-400">Local alias</span>
@@ -451,7 +456,7 @@ function JoinGroupModal({
   }
 
   return (
-    <Modal title="Join a group" onClose={onClose}>
+    <Modal title="Join a group" testid="join-group" onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="text-xs text-zinc-400">Share code</span>
@@ -497,10 +502,12 @@ function JoinGroupModal({
 
 function Modal({
   title,
+  testid,
   onClose,
   children,
 }: {
   title: string;
+  testid?: string;
   onClose: () => void;
   children: React.ReactNode;
 }) {
@@ -508,6 +515,7 @@ function Modal({
     <div
       className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
       onClick={onClose}
+      data-shmark-modal={testid}
     >
       <div
         className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-950 p-5 shadow-xl"

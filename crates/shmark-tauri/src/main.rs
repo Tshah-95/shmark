@@ -1,9 +1,11 @@
 // Quiet the console window on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dev_consumer;
+
 use anyhow::{anyhow, Result};
 use serde_json::Value;
-use shmark_core::{paths, AppState};
+use shmark_core::{dev, paths, AppState};
 use std::sync::Arc;
 use tauri::{
     image::Image,
@@ -46,6 +48,13 @@ fn init_logging() {
 fn main() {
     init_logging();
 
+    // CLI flag parsing — skipping clap to keep startup tight. Two flags
+    // matter: --headless (hide window after boot, don't build tray) and
+    // --display-name=... (seed identity name on first run, ignored after).
+    let raw_args: Vec<String> = std::env::args().collect();
+    let headless = raw_args.iter().any(|a| a == "--headless");
+    info!(headless, "shmark-desktop launching");
+
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init());
 
@@ -72,7 +81,7 @@ fn main() {
     }
 
     builder
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle().clone();
 
             tauri::async_runtime::block_on(async move {
@@ -89,13 +98,19 @@ fn main() {
                     let _ = std::fs::remove_file(&socket);
                 }
 
-                let app_state = AppState::boot("shmark").await?;
+                // Wire up the dev-bridge channel before booting AppState so
+                // the test driver path is live for every operation.
+                let (dev_tx, dev_rx) = dev::channel();
+                let app_state =
+                    AppState::boot_with_dev("shmark", Some(dev_tx)).await?;
                 info!(
                     identity = %app_state.identity.pubkey_hex(),
                     endpoint = %app_state.node.endpoint.id(),
                     "shmark-desktop ready"
                 );
                 let arc = Arc::new(app_state);
+
+                dev_consumer::spawn(handle.clone(), dev_rx);
 
                 let serve_arc = arc.clone();
                 let socket_for_serve = socket.clone();
@@ -107,6 +122,15 @@ fn main() {
                 });
 
                 handle.manage(ShmarkAppState { inner: arc.clone() });
+
+                // Headless mode: hide the main window so test runs don't
+                // appear on the user's screen. Window still has a webview,
+                // JS still executes, dev_* RPCs still drive it.
+                if headless {
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                }
 
                 // Register the configured hotkey. We re-register
                 // dynamically when the user changes it via settings_set.
@@ -120,11 +144,12 @@ fn main() {
             })
             .map_err(|e| -> Box<dyn std::error::Error> { format!("{e:#}").into() })?;
 
-            // Tray icon: persistent menu-bar entry. The main window
-            // hide-on-close behavior is wired on the WindowEvent below; this
-            // is what keeps the daemon reachable after the user closes the
-            // window without quitting the process.
-            build_tray(app)?;
+            // Tray icon: persistent menu-bar entry. Skip in headless mode
+            // — there's no UI a tray icon would lead the user to. The
+            // daemon stays alive via the still-running socket server.
+            if !headless {
+                build_tray(app)?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![rpc])

@@ -2,6 +2,15 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 pub fn data_dir() -> Result<PathBuf> {
+    // SHMARK_DATA_DIR is the integration-test escape hatch — it lets a test
+    // harness boot a fresh AppState in a tempdir without polluting the real
+    // ~/Library/Application Support/shmark/. Production callers leave it
+    // unset and get the OS-standard data dir.
+    if let Ok(custom) = std::env::var("SHMARK_DATA_DIR") {
+        if !custom.is_empty() {
+            return Ok(PathBuf::from(custom));
+        }
+    }
     let dir = dirs::data_dir().context("could not determine data dir")?;
     Ok(dir.join("shmark"))
 }

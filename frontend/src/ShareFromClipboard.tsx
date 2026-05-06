@@ -95,6 +95,7 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
     <div
       className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
       onClick={onClose}
+      data-shmark-modal="share-from-clipboard"
     >
       <div
         className="w-full max-w-lg rounded-lg border border-zinc-800 bg-zinc-950 p-5 shadow-xl"
@@ -253,6 +254,7 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
                 type="submit"
                 disabled={busy || groups.length === 0 || !target}
                 className="rounded bg-zinc-100 text-zinc-900 hover:bg-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                data-testid="share-submit"
               >
                 {busy ? "sharing…" : "Share"}
               </button>
