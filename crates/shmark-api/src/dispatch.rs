@@ -136,9 +136,51 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
                 raw: String,
             }
             let p: P = serde_json::from_value(params)?;
-            let roots = shmark_core::resolve::default_roots();
+            let roots = state.settings.read().await.effective_search_roots();
             let res = shmark_core::resolve::resolve(&p.raw, &roots);
             Ok(serde_json::to_value(res)?)
+        }
+
+        "settings_get" => {
+            let s = state.settings.read().await.clone();
+            let effective_roots: Vec<String> = s
+                .effective_search_roots()
+                .into_iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            Ok(json!({
+                "settings": s,
+                "effective_search_roots": effective_roots,
+                "default_roots": shmark_core::resolve::default_roots()
+                    .into_iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>(),
+            }))
+        }
+
+        "settings_set" => {
+            #[derive(Deserialize)]
+            struct P {
+                hotkey: Option<String>,
+                search_roots: Option<Vec<String>>,
+                auto_pin: Option<bool>,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let mut s = state.settings.write().await;
+            if let Some(h) = p.hotkey {
+                s.hotkey = h;
+            }
+            if let Some(r) = p.search_roots {
+                s.search_roots = r;
+            }
+            if let Some(a) = p.auto_pin {
+                s.auto_pin = a;
+            }
+            s.save()?;
+            let snapshot = s.clone();
+            drop(s);
+            state.signal_settings_changed();
+            Ok(serde_json::to_value(snapshot)?)
         }
 
         "share_create" => {

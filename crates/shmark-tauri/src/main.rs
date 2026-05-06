@@ -43,8 +43,6 @@ fn init_logging() {
     let _ = fmt().with_env_filter(filter).with_target(false).try_init();
 }
 
-const SHARE_HOTKEY: &str = "CmdOrCtrl+Shift+P";
-
 fn main() {
     init_logging();
 
@@ -53,30 +51,18 @@ fn main() {
 
     #[cfg(desktop)]
     {
-        use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+        use tauri_plugin_global_shortcut::ShortcutState;
 
+        // Register the plugin with a generic handler. The actual accelerator
+        // is registered at runtime once we've loaded the user's settings —
+        // any fired shortcut is the configured share hotkey.
         builder = builder.plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([SHARE_HOTKEY])
-                .expect("register shmark hotkey")
-                .with_handler(|app, shortcut, event| {
-                    // Only react on key-down. The handler also fires on
-                    // release; firing the modal twice would be jarring.
+                .with_handler(|app, _shortcut, event| {
                     if event.state != ShortcutState::Pressed {
                         return;
                     }
-                    // Be defensive — match by keycode + modifier so any future
-                    // hotkey rebind funnels through the same predicate.
-                    if !shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::KeyP)
-                        && !shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::KeyP)
-                    {
-                        return;
-                    }
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
-                    }
+                    focus_main(&app.app_handle().clone());
                     if let Err(e) = app.emit("shmark://hotkey/share", ()) {
                         warn!(error = ?e, "failed to emit hotkey event");
                     }
@@ -120,7 +106,16 @@ fn main() {
                     }
                 });
 
-                handle.manage(ShmarkAppState { inner: arc });
+                handle.manage(ShmarkAppState { inner: arc.clone() });
+
+                // Register the configured hotkey. We re-register
+                // dynamically when the user changes it via settings_set.
+                #[cfg(desktop)]
+                {
+                    let initial = arc.settings.read().await.hotkey.clone();
+                    register_hotkey(&handle, &initial);
+                    spawn_hotkey_watcher(handle.clone(), arc.clone(), initial);
+                }
                 Ok::<_, anyhow::Error>(())
             })
             .map_err(|e| -> Box<dyn std::error::Error> { format!("{e:#}").into() })?;
@@ -188,4 +183,49 @@ fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+#[cfg(desktop)]
+fn register_hotkey<R: tauri::Runtime>(app: &tauri::AppHandle<R>, accel: &str) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    if accel.is_empty() {
+        return;
+    }
+    if let Err(e) = app.global_shortcut().register(accel) {
+        warn!(accel = %accel, error = ?e, "register hotkey failed");
+    } else {
+        info!(accel = %accel, "registered hotkey");
+    }
+}
+
+#[cfg(desktop)]
+fn unregister_hotkey<R: tauri::Runtime>(app: &tauri::AppHandle<R>, accel: &str) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    if accel.is_empty() {
+        return;
+    }
+    if let Err(e) = app.global_shortcut().unregister(accel) {
+        warn!(accel = %accel, error = ?e, "unregister hotkey failed");
+    }
+}
+
+#[cfg(desktop)]
+fn spawn_hotkey_watcher<R: tauri::Runtime>(
+    handle: tauri::AppHandle<R>,
+    state: Arc<AppState>,
+    initial: String,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut last = initial;
+        loop {
+            state.settings_changed.notified().await;
+            let new_hotkey = state.settings.read().await.hotkey.clone();
+            if new_hotkey == last {
+                continue;
+            }
+            unregister_hotkey(&handle, &last);
+            register_hotkey(&handle, &new_hotkey);
+            last = new_hotkey;
+        }
+    });
 }

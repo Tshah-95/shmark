@@ -9,6 +9,7 @@ import {
   type ShareCode,
   type ShareRecord,
 } from "./api";
+import { SettingsPanel } from "./Settings";
 import { ShareFromClipboard } from "./ShareFromClipboard";
 import { ShareView } from "./render/ShareView";
 import { formatRelativeTime, shortHex } from "./util";
@@ -26,6 +27,7 @@ export function App() {
   const [showJoin, setShowJoin] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showShareFromClipboard, setShowShareFromClipboard] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -120,12 +122,13 @@ export function App() {
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto px-1.5 pb-2">
+        <div className="flex-1 overflow-y-auto px-1.5 pb-2 flex flex-col">
           {groups.length === 0 && (
             <div className="text-xs text-zinc-500 italic px-2 py-1.5">
               no groups yet
             </div>
           )}
+          <div className="flex-1">
           {groups.map((g) => {
             const shareCount = shares.filter(
               (s) => s.namespace_id === g.namespace_id,
@@ -150,6 +153,13 @@ export function App() {
               </button>
             );
           })}
+          </div>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="mt-2 text-left rounded px-2.5 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200 border-t border-zinc-800/60 pt-2"
+          >
+            ⚙ Settings
+          </button>
         </div>
       </aside>
 
@@ -212,6 +222,9 @@ export function App() {
             await refresh();
           }}
         />
+      )}
+      {showSettings && (
+        <SettingsPanel onClose={() => setShowSettings(false)} />
       )}
     </div>
   );

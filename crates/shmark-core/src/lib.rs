@@ -4,8 +4,11 @@ pub mod identity;
 pub mod node;
 pub mod paths;
 pub mod resolve;
+pub mod settings;
 pub mod shares;
 pub mod state;
+
+pub use settings::Settings;
 
 pub use device::{Device, DeviceCert, SignedDeviceCert};
 pub use groups::{make_local_group, Groups, LocalGroup};

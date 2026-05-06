@@ -1,5 +1,6 @@
 use crate::groups::Groups;
 use crate::node::Node;
+use crate::settings::Settings;
 use crate::shares::Shares;
 use crate::{now_secs, Device, Identity};
 use anyhow::Result;
@@ -16,6 +17,8 @@ pub struct AppState {
     pub author: AuthorId,
     pub groups: Arc<RwLock<Groups>>,
     pub shares: Arc<Shares>,
+    pub settings: Arc<RwLock<Settings>>,
+    pub settings_changed: Arc<Notify>,
     pub started_at: u64,
     pub shutdown: Arc<Notify>,
 }
@@ -42,6 +45,7 @@ impl AppState {
 
         let groups = Groups::load(&groups_state_path)?;
         let shares = Shares::new(node.clone(), author);
+        let settings = Settings::load_or_default()?;
 
         Ok(Self {
             identity: Arc::new(identity),
@@ -50,6 +54,8 @@ impl AppState {
             author,
             groups: Arc::new(RwLock::new(groups)),
             shares: Arc::new(shares),
+            settings: Arc::new(RwLock::new(settings)),
+            settings_changed: Arc::new(Notify::new()),
             started_at: now_secs(),
             shutdown: Arc::new(Notify::new()),
         })
@@ -57,5 +63,9 @@ impl AppState {
 
     pub fn signal_shutdown(&self) {
         self.shutdown.notify_one();
+    }
+
+    pub fn signal_settings_changed(&self) {
+        self.settings_changed.notify_waiters();
     }
 }
