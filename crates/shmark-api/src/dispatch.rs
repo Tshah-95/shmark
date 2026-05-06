@@ -387,6 +387,162 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
             }]))
         }
 
+        "contacts_list" => {
+            let v = state.contacts.read().await.list();
+            Ok(serde_json::to_value(v)?)
+        }
+
+        "contacts_upsert" => {
+            #[derive(Deserialize)]
+            struct P {
+                identity_pubkey: String,
+                display_name: String,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let c = state
+                .contacts
+                .write()
+                .await
+                .upsert(p.identity_pubkey, p.display_name)?;
+            Ok(serde_json::to_value(c)?)
+        }
+
+        "contacts_remove" => {
+            #[derive(Deserialize)]
+            struct P {
+                name_or_pubkey: String,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let removed = state.contacts.write().await.remove(&p.name_or_pubkey)?;
+            Ok(serde_json::to_value(removed)?)
+        }
+
+        "contacts_set_note" => {
+            #[derive(Deserialize)]
+            struct P {
+                name_or_pubkey: String,
+                #[serde(default)]
+                note: Option<String>,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let c = state
+                .contacts
+                .write()
+                .await
+                .set_contact_note(&p.name_or_pubkey, p.note)?;
+            Ok(serde_json::to_value(c)?)
+        }
+
+        "groups_set_note" => {
+            #[derive(Deserialize)]
+            struct P {
+                group: String,
+                #[serde(default)]
+                note: Option<String>,
+            }
+            let p: P = serde_json::from_value(params)?;
+            // Resolve the group alias so we store under the canonical name.
+            let group = state.groups.read().await.resolve(&p.group)?;
+            state
+                .contacts
+                .write()
+                .await
+                .set_group_note(&group.local_alias, p.note)?;
+            Ok(json!({ "group": group.local_alias }))
+        }
+
+        "context_dump" => {
+            // Returns a markdown blob assembling all routing notes the
+            // agent should consider before deciding where to share. Format
+            // is stable (h1: shmark context, h2 sections, h3 entries).
+            let groups_snapshot = state.groups.read().await.list();
+            let contacts_snapshot = state.contacts.read().await;
+            let mut out = String::new();
+            out.push_str("# shmark context\n\n");
+
+            out.push_str("## Identity\n\n");
+            out.push_str(&format!(
+                "- display name: {}\n- identity_pubkey: {}\n\n",
+                state.identity.display_name,
+                state.identity.pubkey_hex()
+            ));
+
+            out.push_str("## Groups\n\n");
+            if groups_snapshot.is_empty() {
+                out.push_str("(no groups yet)\n\n");
+            } else {
+                for g in &groups_snapshot {
+                    out.push_str(&format!("### {}\n\n", g.local_alias));
+                    if let Some(note) = contacts_snapshot.group_note(&g.local_alias) {
+                        out.push_str(note);
+                        out.push_str("\n\n");
+                    } else {
+                        out.push_str("(no note)\n\n");
+                    }
+                }
+            }
+
+            let contacts = contacts_snapshot.list();
+            out.push_str("## Contacts\n\n");
+            if contacts.is_empty() {
+                out.push_str("(no contacts yet)\n\n");
+            } else {
+                for c in contacts {
+                    out.push_str(&format!(
+                        "### {} ({})\n\n",
+                        c.display_name,
+                        &c.identity_pubkey[..c.identity_pubkey.len().min(12)]
+                    ));
+                    if let Some(note) = c.note {
+                        out.push_str(&note);
+                        out.push_str("\n\n");
+                    } else {
+                        out.push_str("(no note)\n\n");
+                    }
+                }
+            }
+            Ok(json!({ "markdown": out }))
+        }
+
+        "resolve_recipient" => {
+            // The "share to <name>" agent endpoint. Given a free-form
+            // string, return either:
+            //   { kind: "group", group: ... }     — single match in groups
+            //   { kind: "contact", contact: ... } — single match in contacts
+            //   { kind: "candidates", candidates: [...] } — ambiguous
+            //   { kind: "none" } — nothing matched
+            //
+            // For v0, contacts that match resolve to "share to a 1:1 group
+            // with that contact" — but we don't have 1:1 groups yet. So
+            // contact resolution is informational; the agent must still
+            // pick a group to share to. We surface contacts here so the
+            // agent can prompt the user with "create a 1:1 with X?".
+            #[derive(Deserialize)]
+            struct P {
+                query: String,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let q = p.query.trim();
+
+            let groups = state.groups.read().await;
+            let group_match = groups.resolve(q).ok();
+            let contacts = state.contacts.read().await;
+            let contact_match = contacts.resolve(q).ok();
+
+            match (group_match, contact_match) {
+                (Some(g), None) => Ok(json!({ "kind": "group", "group": g })),
+                (None, Some(c)) => Ok(json!({ "kind": "contact", "contact": c })),
+                (Some(g), Some(c)) => Ok(json!({
+                    "kind": "candidates",
+                    "candidates": [
+                        {"kind": "group", "group": g},
+                        {"kind": "contact", "contact": c}
+                    ]
+                })),
+                (None, None) => Ok(json!({ "kind": "none", "query": q })),
+            }
+        }
+
         // Test-driver bridge — only available when shmark-tauri has
         // installed a DevSender. The standalone CLI daemon returns an error.
         "dev_emit" => {

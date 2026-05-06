@@ -1,3 +1,4 @@
+use crate::contacts::{contacts_state_path, Contacts};
 use crate::dev::DevSender;
 use crate::groups::Groups;
 use crate::node::Node;
@@ -29,6 +30,8 @@ pub struct AppState {
     /// Tracks one-shot pairing tokens. Same handle is referenced by the
     /// PairProtocol on the iroh router.
     pub pairing: Arc<PairingHost>,
+    /// Local-only contact list + routing notes. Never replicated to peers.
+    pub contacts: Arc<RwLock<Contacts>>,
 }
 
 impl AppState {
@@ -70,6 +73,7 @@ impl AppState {
         let groups = Groups::load(&groups_state_path)?;
         let shares = Shares::new(node.clone(), author);
         let settings = Settings::load_or_default()?;
+        let contacts = Contacts::load(&contacts_state_path()?)?;
 
         let device_arc = Arc::new(device);
 
@@ -86,6 +90,7 @@ impl AppState {
             shutdown: Arc::new(Notify::new()),
             dev_tx,
             pairing,
+            contacts: Arc::new(RwLock::new(contacts)),
         })
     }
 

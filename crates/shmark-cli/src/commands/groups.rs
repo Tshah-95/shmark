@@ -35,6 +35,16 @@ pub enum GroupsCmd {
 
     /// Forget a group locally (does not affect peers).
     Remove { name_or_id: String },
+
+    /// Set or clear a routing note for a group. Use --clear to remove.
+    Note {
+        name_or_id: String,
+        /// Note body.
+        #[arg(default_value = "")]
+        note: String,
+        #[arg(long)]
+        clear: bool,
+    },
 }
 
 pub async fn run(cmd: GroupsCmd) -> Result<()> {
@@ -75,6 +85,23 @@ pub async fn run(cmd: GroupsCmd) -> Result<()> {
                 &socket,
                 "groups_remove",
                 json!({ "name_or_id": name_or_id }),
+            )
+            .await?
+        }
+        GroupsCmd::Note {
+            name_or_id,
+            note,
+            clear,
+        } => {
+            let note_value: Option<String> = if clear || note.is_empty() {
+                None
+            } else {
+                Some(note)
+            };
+            client::call_with_params(
+                &socket,
+                "groups_set_note",
+                json!({ "group": name_or_id, "note": note_value }),
             )
             .await?
         }

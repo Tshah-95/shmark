@@ -25,6 +25,14 @@ enum Command {
     #[command(subcommand)]
     Devices(commands::devices::DevicesCmd),
 
+    /// Contacts (other people's identities + per-contact routing notes).
+    #[command(subcommand)]
+    Contacts(commands::contacts::ContactsCmd),
+
+    /// Agent context — dump routing notes, resolve a name to a target.
+    #[command(subcommand)]
+    Context(commands::context::ContextCmd),
+
     /// Groups (DM-style containers for shares).
     #[command(subcommand)]
     Groups(commands::groups::GroupsCmd),
@@ -46,6 +54,8 @@ fn main() -> Result<()> {
             Command::Identity(c) => commands::identity::run(c).await,
             Command::Daemon(c) => commands::daemon::run(c).await,
             Command::Devices(c) => commands::devices::run(c).await,
+            Command::Contacts(c) => commands::contacts::run(c).await,
+            Command::Context(c) => commands::context::run(c).await,
             Command::Groups(c) => commands::groups::run(c).await,
             Command::Share(args) => commands::shares::run_share(args).await,
             Command::Shares(c) => commands::shares::run_shares(c).await,

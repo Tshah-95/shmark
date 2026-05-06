@@ -4,12 +4,11 @@ Peer-to-peer markdown sharing. Hit a hotkey with a markdown path or URL on your
 clipboard and shmark shares it — beautifully rendered — with the people you
 choose. Local-first, end-to-end encrypted, open source.
 
-> **Status:** pre-alpha. Steps 1–4 of the [build order](./SPEC.md#15-build-order)
-> work — stable identity, CLI control plane, peer-to-peer file sharing, a
-> Tauri desktop app with a markdown-rendering UI (shiki + mermaid), and a
-> global hotkey that opens a share-from-clipboard modal. No notifications,
-> no multi-device pairing, no routing notes yet. See
-> [`SPEC.md`](./SPEC.md) for what's next.
+> **Status:** alpha. All 7 [build-order steps](./SPEC.md#15-build-order)
+> are shipped. Identity + daemon + CLI + groups + shares + Tauri UI +
+> markdown render + global hotkey + multi-device pairing + sync status
+> + routing notes / agent surface. Verified by 22 Rust tests, 18 frontend
+> tests, 4 end-to-end specs.
 
 ## Try it
 

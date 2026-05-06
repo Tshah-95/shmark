@@ -1,3 +1,4 @@
+pub mod contacts;
 pub mod dev;
 pub mod device;
 pub mod groups;
