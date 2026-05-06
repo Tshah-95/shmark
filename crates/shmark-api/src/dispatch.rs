@@ -8,7 +8,7 @@ use iroh_docs::DocTicket;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use shmark_core::{groups::make_local_group, AppState, LocalGroup};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<Value> {
@@ -130,10 +130,22 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
             Ok(serde_json::to_value(&removed)?)
         }
 
+        "paths_resolve" => {
+            #[derive(Deserialize)]
+            struct P {
+                raw: String,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let roots = shmark_core::resolve::default_roots();
+            let res = shmark_core::resolve::resolve(&p.raw, &roots);
+            Ok(serde_json::to_value(res)?)
+        }
+
         "share_create" => {
             #[derive(Deserialize)]
             struct P {
                 group: String,
+                /// File path, directory path, or http(s) URL.
                 path: String,
                 name: Option<String>,
                 description: Option<String>,
@@ -144,7 +156,7 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
                 .shares
                 .create(
                     &group,
-                    Path::new(&p.path),
+                    &p.path,
                     p.name,
                     p.description,
                     state.identity.pubkey_hex(),

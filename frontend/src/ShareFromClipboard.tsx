@@ -1,12 +1,22 @@
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { useEffect, useState } from "react";
 import { rpc, type LocalGroup, type ShareRecord } from "./api";
+import { formatBytes, formatRelativeTime } from "./util";
 
-type Detected =
-  | { kind: "path"; path: string }
-  | { kind: "url"; url: string }
+type Candidate = {
+  path: string;
+  parent_dir: string;
+  size_bytes: number;
+  mtime_secs: number;
+};
+
+type Resolution =
+  | { kind: "empty" }
   | { kind: "unsupported"; raw: string }
-  | { kind: "empty" };
+  | { kind: "url"; url: string }
+  | { kind: "path"; candidate: Candidate }
+  | { kind: "candidates"; candidates: Candidate[] }
+  | { kind: "not_found"; query: string; roots: string[] };
 
 type Props = {
   groups: LocalGroup[];
@@ -15,8 +25,9 @@ type Props = {
 };
 
 export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
-  const [detected, setDetected] = useState<Detected | null>(null);
-  const [target, setTarget] = useState<string | "">("");
+  const [resolution, setResolution] = useState<Resolution | null>(null);
+  const [chosen, setChosen] = useState<Candidate | null>(null);
+  const [target, setTarget] = useState<string>("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,21 +37,18 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const raw = (await readText()).trim();
+        const raw = (await readText()) ?? "";
+        const r = await rpc<Resolution>("paths_resolve", { raw });
         if (cancelled) return;
-        if (!raw) {
-          setDetected({ kind: "empty" });
-          return;
-        }
-        const d = classify(raw);
-        setDetected(d);
-        if (d.kind === "path") {
-          const last = d.path.split("/").pop() ?? "";
-          setName(last);
+        setResolution(r);
+        if (r.kind === "path") {
+          setChosen(r.candidate);
+          setName(basename(r.candidate.path));
+        } else if (r.kind === "url") {
+          setName(urlBasename(r.url) ?? "shared.md");
         }
       } catch (e) {
-        if (!cancelled)
-          setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
     })();
     return () => {
@@ -54,15 +62,25 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
     }
   }, [groups, target]);
 
+  function pickCandidate(c: Candidate) {
+    setChosen(c);
+    setName(basename(c.path));
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!detected || detected.kind !== "path" || !target) return;
+    if (!target || !resolution) return;
     setBusy(true);
     setError(null);
     try {
+      const sourcePath =
+        resolution.kind === "url"
+          ? resolution.url
+          : (chosen?.path ?? null);
+      if (!sourcePath) throw new Error("nothing to share");
       const record = await rpc<ShareRecord>("share_create", {
         group: target,
-        path: detected.path,
+        path: sourcePath,
         name: name.trim() || null,
         description: description.trim() || null,
       });
@@ -79,7 +97,7 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-950 p-5 shadow-xl"
+        className="w-full max-w-lg rounded-lg border border-zinc-800 bg-zinc-950 p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
@@ -92,54 +110,95 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
           </button>
         </div>
 
-        {detected === null && (
-          <div className="text-sm text-zinc-400">reading clipboard…</div>
+        {resolution === null && (
+          <div className="text-sm text-zinc-400 italic">resolving…</div>
         )}
 
-        {detected?.kind === "empty" && (
+        {resolution?.kind === "empty" && (
           <div className="text-sm text-zinc-400">
-            Clipboard is empty. Copy a markdown file path, then press the
+            Clipboard is empty. Copy a file path or URL, then press the
             hotkey again.
           </div>
         )}
 
-        {detected?.kind === "unsupported" && (
+        {resolution?.kind === "unsupported" && (
           <div className="space-y-2">
             <div className="text-sm text-zinc-400">
-              shmark didn't recognize this clipboard content as a markdown
-              file.
+              shmark didn't recognize this clipboard content as a file path or
+              URL.
             </div>
             <pre className="text-xs font-mono text-zinc-500 max-h-32 overflow-auto whitespace-pre-wrap p-2 rounded bg-zinc-900">
-              {detected.raw.slice(0, 300)}
-              {detected.raw.length > 300 ? "…" : ""}
+              {resolution.raw.slice(0, 300)}
+              {resolution.raw.length > 300 ? "…" : ""}
             </pre>
-            <div className="text-xs text-zinc-500">
-              Supported (v0): a local file path ending in <code>.md</code>,{" "}
-              <code>.txt</code>, or another previewable extension.
-            </div>
           </div>
         )}
 
-        {detected?.kind === "url" && (
+        {resolution?.kind === "not_found" && (
           <div className="space-y-2">
             <div className="text-sm text-zinc-300">
-              URL detected:
-              <span className="font-mono text-xs block truncate text-zinc-400 mt-0.5">
-                {detected.url}
-              </span>
+              Couldn't find a file matching{" "}
+              <code className="px-1 rounded bg-zinc-900 text-xs">
+                {resolution.query}
+              </code>
+              .
             </div>
             <div className="text-xs text-zinc-500">
-              URL fetching isn't wired up yet (v1). For now, save the file
-              locally and re-copy the path.
+              Searched: {resolution.roots.join(", ") || "(no roots)"}
+            </div>
+            <div className="text-xs text-zinc-500">
+              Tip: copy the absolute path (e.g. with{" "}
+              <code className="px-1 rounded bg-zinc-900">realpath</code>) or
+              add the project's parent dir to the search roots in Settings.
             </div>
           </div>
         )}
 
-        {detected?.kind === "path" && (
+        {resolution?.kind === "candidates" && !chosen && (
+          <div className="space-y-2">
+            <div className="text-xs text-zinc-400 uppercase tracking-wider">
+              Multiple matches — pick one
+            </div>
+            <ul className="divide-y divide-zinc-900 rounded border border-zinc-800">
+              {resolution.candidates.map((c) => (
+                <li key={c.path}>
+                  <button
+                    onClick={() => pickCandidate(c)}
+                    className="w-full text-left px-3 py-2 hover:bg-zinc-900/60"
+                  >
+                    <div className="text-sm font-medium">{basename(c.path)}</div>
+                    <div className="text-xs text-zinc-500 font-mono truncate">
+                      {c.parent_dir}
+                    </div>
+                    <div className="text-xs text-zinc-500 mt-0.5">
+                      {formatBytes(c.size_bytes)} ·{" "}
+                      {formatRelativeTime(c.mtime_secs)}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {(resolution?.kind === "path" ||
+          (resolution?.kind === "candidates" && chosen) ||
+          resolution?.kind === "url") && (
           <form onSubmit={submit} className="space-y-3">
             <div className="text-xs text-zinc-500 font-mono break-all">
-              {detected.path}
+              {resolution.kind === "url"
+                ? resolution.url
+                : (chosen?.path ?? "")}
             </div>
+            {resolution.kind === "candidates" && chosen && (
+              <button
+                type="button"
+                onClick={() => setChosen(null)}
+                className="text-xs text-zinc-400 hover:text-zinc-100"
+              >
+                ← pick a different match
+              </button>
+            )}
 
             <label className="block">
               <span className="text-xs text-zinc-400">Share to</span>
@@ -170,7 +229,9 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
             </label>
 
             <label className="block">
-              <span className="text-xs text-zinc-400">Description (optional)</span>
+              <span className="text-xs text-zinc-400">
+                Description (optional)
+              </span>
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -199,7 +260,7 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
           </form>
         )}
 
-        {error && detected?.kind !== "path" && (
+        {error && resolution?.kind !== "path" && resolution?.kind !== "url" && (
           <div className="mt-3 text-xs text-red-300">{error}</div>
         )}
       </div>
@@ -207,22 +268,16 @@ export function ShareFromClipboard({ groups, onClose, onShared }: Props) {
   );
 }
 
-function classify(raw: string): Detected {
-  // file:// URL
-  if (raw.startsWith("file://")) {
-    return { kind: "path", path: raw.replace(/^file:\/\//, "") };
+function basename(p: string): string {
+  return p.split("/").pop() ?? p;
+}
+
+function urlBasename(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop();
+    return last ?? null;
+  } catch {
+    return null;
   }
-  // http(s) URL
-  if (/^https?:\/\//.test(raw)) {
-    return { kind: "url", url: raw };
-  }
-  // Absolute or home-relative local path
-  if (raw.startsWith("/") || raw.startsWith("~")) {
-    return { kind: "path", path: raw };
-  }
-  // Looks like a path with an extension we know about
-  if (/[A-Za-z0-9_\-]\.[A-Za-z0-9]{1,8}$/.test(raw) && !raw.includes("\n")) {
-    return { kind: "path", path: raw };
-  }
-  return { kind: "unsupported", raw };
 }

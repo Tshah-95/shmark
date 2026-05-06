@@ -46,6 +46,12 @@ uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 futures-util = "0.3"
 base64 = "0.22"
+ignore = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+mime = "0.3"
+mime_guess = "2"
+tempfile = "3"
+url = "2"
 
 # cli
 clap = { version = "4", features = ["derive"] }

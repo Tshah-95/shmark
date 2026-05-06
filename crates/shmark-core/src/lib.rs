@@ -3,6 +3,7 @@ pub mod groups;
 pub mod identity;
 pub mod node;
 pub mod paths;
+pub mod resolve;
 pub mod shares;
 pub mod state;
 
