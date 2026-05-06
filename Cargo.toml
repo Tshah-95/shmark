@@ -4,6 +4,7 @@ members = [
     "crates/shmark-core",
     "crates/shmark-api",
     "crates/shmark-cli",
+    "crates/shmark-tauri",
 ]
 
 [workspace.package]
@@ -44,6 +45,7 @@ n0-future = "0.3"
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 futures-util = "0.3"
+base64 = "0.22"
 
 # cli
 clap = { version = "4", features = ["derive"] }

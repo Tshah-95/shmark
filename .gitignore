@@ -7,6 +7,7 @@ Cargo.lock.bak
 src-tauri/target
 src-tauri/gen
 src-tauri/WixTools
+crates/shmark-tauri/gen
 
 # Frontend
 node_modules
@@ -14,6 +15,7 @@ dist
 dist-ssr
 .vite
 *.local
+*.tsbuildinfo
 
 # Editors
 .vscode/*

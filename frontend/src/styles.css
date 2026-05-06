@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI",
+    Helvetica, Arial, sans-serif;
+}
+
+/* Tabular figures for hashes / ids */
+.font-mono {
+  font-family:
+    "JetBrains Mono", "SF Mono", Menlo, Consolas, ui-monospace, monospace;
+}
+
+/* shmark renderer styles */
+.prose-sh h1,
+.prose-sh h2,
+.prose-sh h3,
+.prose-sh h4 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 1.6em;
+  margin-bottom: 0.6em;
+}
+.prose-sh h1 { font-size: 1.875rem; }
+.prose-sh h2 { font-size: 1.5rem; }
+.prose-sh h3 { font-size: 1.25rem; }
+.prose-sh h4 { font-size: 1.1rem; }
+.prose-sh p { line-height: 1.7; margin: 0.85em 0; }
+.prose-sh ul, .prose-sh ol { padding-left: 1.5rem; margin: 0.85em 0; }
+.prose-sh li { margin: 0.35em 0; }
+.prose-sh ul { list-style: disc; }
+.prose-sh ol { list-style: decimal; }
+.prose-sh code:not(pre code) {
+  background: rgb(39 39 42);
+  padding: 0.15em 0.4em;
+  border-radius: 0.3em;
+  font-size: 0.9em;
+}
+.prose-sh pre {
+  background: rgb(24 24 27);
+  border: 1px solid rgb(39 39 42);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 1.2em 0;
+}
+.prose-sh pre code { background: transparent; padding: 0; }
+.prose-sh blockquote {
+  border-left: 3px solid rgb(82 82 91);
+  padding-left: 1rem;
+  color: rgb(212 212 216);
+  margin: 1.2em 0;
+}
+.prose-sh table {
+  border-collapse: collapse;
+  margin: 1.2em 0;
+  font-size: 0.92rem;
+}
+.prose-sh th, .prose-sh td {
+  border: 1px solid rgb(63 63 70);
+  padding: 0.45rem 0.8rem;
+  text-align: left;
+}
+.prose-sh th { background: rgb(39 39 42); font-weight: 600; }
+.prose-sh a { color: rgb(96 165 250); text-decoration: underline; text-decoration-thickness: 1px; }
+.prose-sh hr { border: none; border-top: 1px solid rgb(63 63 70); margin: 2em 0; }
+.prose-sh img { max-width: 100%; border-radius: 0.4rem; }

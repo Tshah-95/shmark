@@ -155,6 +155,38 @@ impl Shares {
             .find(|r| r.share_id == share_id))
     }
 
+    /// Read a single item's bytes into memory. Triggers a peer fetch if the
+    /// blob isn't local yet. Used by the in-app preview to render content
+    /// without hitting the user's filesystem.
+    pub async fn read_item(
+        &self,
+        group: &LocalGroup,
+        share_id: &str,
+        item_idx: usize,
+    ) -> Result<bytes::Bytes> {
+        let record = self
+            .get(group, share_id)
+            .await?
+            .ok_or_else(|| anyhow!("share not found: {share_id}"))?;
+        let item = record
+            .items
+            .get(item_idx)
+            .ok_or_else(|| anyhow!("item index {item_idx} out of range (len={})", record.items.len()))?;
+        let hash = iroh_blobs::Hash::from_str(&item.blob_hash)
+            .with_context(|| format!("parse blob hash {}", item.blob_hash))?;
+
+        let downloader = self.node.blobs.downloader(&self.node.endpoint);
+        let provider = iroh::EndpointId::from_str(&record.author_node)
+            .with_context(|| format!("parse author endpoint id {}", record.author_node))?;
+        downloader
+            .download(hash, vec![provider])
+            .await
+            .with_context(|| format!("download blob {}", item.blob_hash))?;
+
+        let bytes = self.node.blobs.blobs().get_bytes(hash).await?;
+        Ok(bytes)
+    }
+
     /// Download all items of a share to a destination directory (single-file
     /// shares are written as `<dest>/<name>`; folder shares preserve relative
     /// paths). Fetches blob bytes from the share's author over iroh if not

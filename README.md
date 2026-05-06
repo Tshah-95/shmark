@@ -4,14 +4,18 @@ Peer-to-peer markdown sharing. Hit a hotkey with a markdown path or URL on your
 clipboard and shmark shares it — beautifully rendered — with the people you
 choose. Local-first, end-to-end encrypted, open source.
 
-> **Status:** pre-alpha. Steps 1–2 of the [build order](./SPEC.md#15-build-order)
-> work — stable identity, CLI control plane, peer-to-peer file sharing across
-> devices. No UI, no hotkey, no notifications yet. See [`SPEC.md`](./SPEC.md)
-> for what's next.
+> **Status:** pre-alpha. Steps 1–3 of the [build order](./SPEC.md#15-build-order)
+> work — stable identity, CLI control plane, peer-to-peer file sharing, and a
+> Tauri desktop app with a markdown-rendering UI (shiki + mermaid). No
+> hotkey, no notifications, no multi-device pairing yet. See
+> [`SPEC.md`](./SPEC.md) for what's next.
 
 ## Try it
 
-Requires Rust 1.95+ (`.mise.toml` pins this). On macOS or Linux:
+Requires Rust 1.95+ (`.mise.toml` pins this) and bun for the frontend. On
+macOS or Linux:
+
+### CLI only
 
 ```bash
 cargo build
@@ -29,6 +33,27 @@ cargo build
 ./target/debug/shmark shares download <share_id> --group from-A --dest ./out
 ```
 
+### Desktop app
+
+```bash
+# stop any standalone daemon — the desktop app embeds its own
+./target/debug/shmark daemon stop
+
+# install frontend deps once
+bun --cwd frontend install
+
+# in one terminal: vite dev server
+bun --cwd frontend run dev
+
+# in another: launch the Tauri app (it embeds the daemon + serves the
+# unix socket, so the CLI keeps working against the same process)
+cargo run -p shmark-tauri
+```
+
+The Tauri app and the standalone CLI daemon both speak the same JSON RPC,
+so `shmark groups list` etc. will hit whichever is currently the socket
+owner. They cannot run at the same time.
+
 Identity, device key, group state, blobs, and doc replicas all persist in
 `~/Library/Application Support/shmark/` (macOS) or `~/.local/share/shmark/`
 (Linux).
@@ -37,10 +62,10 @@ Identity, device key, group state, blobs, and doc replicas all persist in
 
 - **Stable identity per human** — Ed25519 identity keypair, separate from each
   device's network key. Devices carry signed certs linking node → identity.
-- **Daemon + thin clients** — Tauri-app-as-daemon pattern (daemon-only for now).
-  Unix socket at `~/Library/Application Support/shmark/shmark.sock`, line-
-  delimited JSON RPC. CLI is a thin client; agents and the future Tauri UI use
-  the same surface.
+- **Daemon + thin clients** — Tauri-app-as-daemon (the desktop binary embeds
+  the daemon) or standalone CLI daemon. Both expose the same JSON RPC over
+  `~/Library/Application Support/shmark/shmark.sock`. CLI, frontend, and
+  future agents all hit one dispatch function.
 - **Groups** — DM-style containers for shares. Each is an `iroh-docs` document
   replicated peer-to-peer.
 - **Shares** — files added to `iroh-blobs`, metadata written into the group's
@@ -49,6 +74,11 @@ Identity, device key, group state, blobs, and doc replicas all persist in
 - **Cross-device sync** — verified between Mac (NYC) and a box in HEL1-DC4
   (Helsinki); SHA-256 byte-identical in both directions.
 - **Live sync resume** — daemons reconnect to known group peers on restart.
+- **Desktop UI** — React 19 + Tailwind v4. Sidebar of groups, share list,
+  rendered preview. Markdown renders via `react-markdown` + `remark-gfm` +
+  `shiki` (code highlighting) + `mermaid` (diagrams). Code files (`.ts`,
+  `.py`, etc.), JSON, YAML, CSV, and images all preview natively. Raw HTML
+  in markdown is disabled.
 
 ## What's not built yet
 
