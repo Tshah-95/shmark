@@ -21,6 +21,15 @@ pub struct Candidate {
     pub parent_dir: String,
     pub size_bytes: u64,
     pub mtime_secs: u64,
+    /// "file" or "dir" — the modal can show different copy for folder shares.
+    pub kind: CandidateKind,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CandidateKind {
+    File,
+    Dir,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -175,6 +184,8 @@ fn search(query: &str, roots: &[PathBuf], hard_limit: usize) -> Vec<Candidate> {
             let Some(ft) = entry.file_type() else {
                 continue;
             };
+            // Search only finds files. Direct path resolution (single()) is
+            // what handles directories — that path doesn't go through this loop.
             if !ft.is_file() {
                 continue;
             }
@@ -207,9 +218,13 @@ fn matches_query(path: &Path, query: &str, basename_only: bool) -> bool {
 
 fn candidate_from(path: &Path) -> Option<Candidate> {
     let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() {
+    let kind = if meta.is_dir() {
+        CandidateKind::Dir
+    } else if meta.is_file() {
+        CandidateKind::File
+    } else {
         return None;
-    }
+    };
     let mtime_secs = meta
         .modified()
         .ok()
@@ -224,6 +239,7 @@ fn candidate_from(path: &Path) -> Option<Candidate> {
             .unwrap_or_default(),
         size_bytes: meta.len(),
         mtime_secs,
+        kind,
     })
 }
 
