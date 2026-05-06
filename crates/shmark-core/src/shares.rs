@@ -157,7 +157,8 @@ impl Shares {
 
     /// Download all items of a share to a destination directory (single-file
     /// shares are written as `<dest>/<name>`; folder shares preserve relative
-    /// paths). Returns the destination root.
+    /// paths). Fetches blob bytes from the share's author over iroh if not
+    /// already locally present. Returns the destination root.
     pub async fn download(
         &self,
         group: &LocalGroup,
@@ -172,6 +173,10 @@ impl Shares {
         std::fs::create_dir_all(dest_root)
             .with_context(|| format!("create dest dir {}", dest_root.display()))?;
 
+        let downloader = self.node.blobs.downloader(&self.node.endpoint);
+        let provider = iroh::EndpointId::from_str(&record.author_node)
+            .with_context(|| format!("parse author endpoint id {}", record.author_node))?;
+
         for item in &record.items {
             let hash = iroh_blobs::Hash::from_str(&item.blob_hash)
                 .with_context(|| format!("parse blob hash {}", item.blob_hash))?;
@@ -183,6 +188,14 @@ impl Shares {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("create {}", parent.display()))?;
             }
+            // Idempotent: returns immediately if the blob is already local.
+            // For now we only ask the original author. v1 will add other
+            // group peers as fallback providers.
+            downloader
+                .download(hash, vec![provider])
+                .await
+                .with_context(|| format!("download blob {}", item.blob_hash))?;
+
             self.node
                 .blobs
                 .blobs()
