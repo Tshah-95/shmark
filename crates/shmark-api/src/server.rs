@@ -124,9 +124,12 @@ async fn handle(req: Request, state: &AppState) -> Result<serde_json::Value> {
             }
             let p: P = serde_json::from_value(req.params)?;
             let doc = state.node.docs.create().await?;
-            let ns_id = doc.id().to_string();
+            let ns = doc.id();
+            // Put the doc into active sync mode so peers who join later can
+            // gossip writes back to us.
+            doc.start_sync(vec![]).await.ok();
             doc.close().await.ok();
-            let local = make_local_group(ns_id.clone(), p.alias, true);
+            let local = make_local_group(ns.to_string(), p.alias, true);
             state.groups.write().await.upsert(local.clone())?;
             Ok(serde_json::to_value(&local)?)
         }
