@@ -1,4 +1,5 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { useCallback, useEffect, useState } from "react";
 import {
   rpc,
@@ -272,7 +273,9 @@ function GroupView({
         name_or_id: alias,
         read_only: false,
       });
-      await navigator.clipboard.writeText(result.code);
+      // Use the Tauri clipboard plugin instead of navigator.clipboard so we
+      // bypass the webview's secure-context restrictions in dev mode.
+      await clipboardWriteText(result.code);
       setCodeNotice("share code copied to clipboard");
       onCopiedShareCode();
       window.setTimeout(() => setCodeNotice(null), 2500);
