@@ -4,8 +4,24 @@ Peer-to-peer markdown sharing. Hit a hotkey with a markdown path or URL on your
 clipboard and shmark shares it — beautifully rendered — with the people you
 choose. Local-first, end-to-end encrypted, open source.
 
-> **Status:** pre-alpha. Spec is locked, scaffolding in progress. See [`SPEC.md`](./SPEC.md)
-> for what's being built and why.
+> **Status:** pre-alpha. Step 1 of the [build order](./SPEC.md#15-build-order)
+> works — the daemon boots a stable identity, the CLI talks to it over a Unix
+> socket. No groups, no shares, no UI yet. See [`SPEC.md`](./SPEC.md) for the
+> full plan.
+
+## Try it
+
+Requires Rust 1.95+ (the repo's `.mise.toml` pins this). On macOS:
+
+```bash
+cargo build
+./target/debug/shmark daemon start
+./target/debug/shmark identity show
+./target/debug/shmark daemon stop
+```
+
+State lives in `~/Library/Application Support/shmark/`. The identity keypair
+persists, so every restart shows the same `identity_pubkey`.
 
 ## Why
 

@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/shmark-core",
+    "crates/shmark-api",
+    "crates/shmark-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+authors = ["Tejas Shah"]
+repository = "https://github.com/Tshah-95/shmark"
+rust-version = "1.95"
+
+[workspace.dependencies]
+# core
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# crypto + identity
+ed25519-dalek = { version = "2", features = ["rand_core", "serde"] }
+rand = "0.8"
+hex = "0.4"
+blake3 = "1"
+
+# fs + paths
+dirs = "5"
+
+# p2p
+iroh = "0.98"
+
+# cli
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+
+# internal
+shmark-core = { path = "crates/shmark-core" }
+shmark-api = { path = "crates/shmark-api" }
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
