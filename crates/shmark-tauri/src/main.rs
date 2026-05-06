@@ -5,8 +5,8 @@ use anyhow::{anyhow, Result};
 use serde_json::Value;
 use shmark_core::{paths, AppState};
 use std::sync::Arc;
-use tauri::Manager;
-use tracing::info;
+use tauri::{Emitter, Manager};
+use tracing::{info, warn};
 
 struct ShmarkAppState {
     inner: Arc<AppState>,
@@ -16,7 +16,7 @@ struct ShmarkAppState {
 async fn rpc(
     state: tauri::State<'_, ShmarkAppState>,
     method: String,
-    #[allow(non_snake_case)] params: Option<Value>,
+    params: Option<Value>,
 ) -> Result<Value, String> {
     shmark_api::dispatch(&method, params.unwrap_or(Value::Null), &state.inner)
         .await
@@ -36,15 +36,52 @@ fn init_logging() {
     let _ = fmt().with_env_filter(filter).with_target(false).try_init();
 }
 
+const SHARE_HOTKEY: &str = "CmdOrCtrl+Shift+P";
+
 fn main() {
     init_logging();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init());
+
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+
+        builder = builder.plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts([SHARE_HOTKEY])
+                .expect("register shmark hotkey")
+                .with_handler(|app, shortcut, event| {
+                    // Only react on key-down. The handler also fires on
+                    // release; firing the modal twice would be jarring.
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    // Be defensive — match by keycode + modifier so any future
+                    // hotkey rebind funnels through the same predicate.
+                    if !shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::KeyP)
+                        && !shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::KeyP)
+                    {
+                        return;
+                    }
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
+                    if let Err(e) = app.emit("shmark://hotkey/share", ()) {
+                        warn!(error = ?e, "failed to emit hotkey event");
+                    }
+                })
+                .build(),
+        );
+    }
+
+    builder
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Boot synchronously so commands can rely on the state being
-            // managed before any UI calls land.
             tauri::async_runtime::block_on(async move {
                 paths::ensure_data_dir()?;
 
@@ -67,9 +104,6 @@ fn main() {
                 );
                 let arc = Arc::new(app_state);
 
-                // Run the unix-socket control plane in the background so the
-                // CLI and any agents can hit the same daemon while the GUI is
-                // running.
                 let serve_arc = arc.clone();
                 let socket_for_serve = socket.clone();
                 tauri::async_runtime::spawn(async move {

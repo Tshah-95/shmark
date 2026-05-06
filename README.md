@@ -4,10 +4,11 @@ Peer-to-peer markdown sharing. Hit a hotkey with a markdown path or URL on your
 clipboard and shmark shares it — beautifully rendered — with the people you
 choose. Local-first, end-to-end encrypted, open source.
 
-> **Status:** pre-alpha. Steps 1–3 of the [build order](./SPEC.md#15-build-order)
-> work — stable identity, CLI control plane, peer-to-peer file sharing, and a
-> Tauri desktop app with a markdown-rendering UI (shiki + mermaid). No
-> hotkey, no notifications, no multi-device pairing yet. See
+> **Status:** pre-alpha. Steps 1–4 of the [build order](./SPEC.md#15-build-order)
+> work — stable identity, CLI control plane, peer-to-peer file sharing, a
+> Tauri desktop app with a markdown-rendering UI (shiki + mermaid), and a
+> global hotkey that opens a share-from-clipboard modal. No notifications,
+> no multi-device pairing, no routing notes yet. See
 > [`SPEC.md`](./SPEC.md) for what's next.
 
 ## Try it
@@ -79,6 +80,10 @@ Identity, device key, group state, blobs, and doc replicas all persist in
   `shiki` (code highlighting) + `mermaid` (diagrams). Code files (`.ts`,
   `.py`, etc.), JSON, YAML, CSV, and images all preview natively. Raw HTML
   in markdown is disabled.
+- **Global hotkey** — `Cmd+Shift+P` (rebindable later). Reads the clipboard,
+  detects a markdown file path, and opens a "share to" modal with a group
+  picker. Backed by `tauri-plugin-global-shortcut`; first launch on macOS
+  prompts for accessibility permission.
 
 ## What's not built yet
 

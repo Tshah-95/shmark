@@ -1,3 +1,4 @@
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import {
   rpc,
@@ -7,6 +8,7 @@ import {
   type ShareCode,
   type ShareRecord,
 } from "./api";
+import { ShareFromClipboard } from "./ShareFromClipboard";
 import { ShareView } from "./render/ShareView";
 import { formatRelativeTime, shortHex } from "./util";
 
@@ -22,6 +24,7 @@ export function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [showJoin, setShowJoin] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showShareFromClipboard, setShowShareFromClipboard] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -44,6 +47,24 @@ export function App() {
     const t = window.setInterval(refresh, 3000);
     return () => window.clearInterval(t);
   }, [refresh]);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      try {
+        unlisten = await listen("shmark://hotkey/share", () => {
+          setShowShareFromClipboard(true);
+        });
+      } catch {
+        // Tauri event subsystem may not be available in non-Tauri runtimes
+        // (e.g. running the frontend in plain Vite for development); fail
+        // open silently.
+      }
+    })();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   if (bootError) {
     return (
@@ -177,6 +198,16 @@ export function App() {
           onClose={() => setShowJoin(false)}
           onJoined={async () => {
             setShowJoin(false);
+            await refresh();
+          }}
+        />
+      )}
+      {showShareFromClipboard && (
+        <ShareFromClipboard
+          groups={groups}
+          onClose={() => setShowShareFromClipboard(false)}
+          onShared={async () => {
+            setShowShareFromClipboard(false);
             await refresh();
           }}
         />
