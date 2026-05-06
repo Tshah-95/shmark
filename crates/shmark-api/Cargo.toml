@@ -15,4 +15,6 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+iroh-docs.workspace = true
+
 shmark-core.workspace = true

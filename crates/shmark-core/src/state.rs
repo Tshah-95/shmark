@@ -1,34 +1,55 @@
+use crate::groups::Groups;
+use crate::node::Node;
+use crate::shares::Shares;
 use crate::{now_secs, Device, Identity};
 use anyhow::Result;
-use iroh::Endpoint;
+use iroh_docs::AuthorId;
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, RwLock};
 
 /// Daemon-wide state. Cheap to clone — everything heavy is behind Arc.
 #[derive(Clone)]
 pub struct AppState {
     pub identity: Arc<Identity>,
     pub device: Arc<Device>,
-    pub endpoint: Endpoint,
+    pub node: Node,
+    pub author: AuthorId,
+    pub groups: Arc<RwLock<Groups>>,
+    pub shares: Arc<Shares>,
     pub started_at: u64,
     pub shutdown: Arc<Notify>,
 }
 
 impl AppState {
     pub async fn boot(default_display_name: &str) -> Result<Self> {
-        let _data_dir = crate::paths::ensure_data_dir()?;
+        let data_dir = crate::paths::ensure_data_dir()?;
         let identity_path = crate::paths::identity_path()?;
         let device_path = crate::paths::device_path()?;
+        let groups_state_path = crate::paths::groups_state_path()?;
 
         let identity = Identity::load_or_create(&identity_path, default_display_name)?;
         let device = Device::load_or_create(&device_path, &identity)?;
 
-        let endpoint = crate::node::bind_endpoint(device.iroh_secret.clone()).await?;
+        let node = Node::boot(device.iroh_secret.clone(), &data_dir).await?;
+
+        // The default author is created on first boot inside iroh-docs and
+        // persists across restarts via Docs::persistent. We use it as this
+        // device's author for every share entry we publish.
+        let author = node
+            .docs
+            .author_default()
+            .await?;
+
+        let groups = Groups::load(&groups_state_path)?;
+        let shares = Shares::new(node.clone(), author);
 
         Ok(Self {
             identity: Arc::new(identity),
             device: Arc::new(device),
-            endpoint,
+            node,
+            author,
+            groups: Arc::new(RwLock::new(groups)),
+            shares: Arc::new(shares),
             started_at: now_secs(),
             shutdown: Arc::new(Notify::new()),
         })

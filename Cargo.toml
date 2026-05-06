@@ -35,6 +35,15 @@ dirs = "5"
 
 # p2p
 iroh = "0.98"
+iroh-blobs = "0.100"
+iroh-docs = "0.98"
+iroh-gossip = "0.98"
+n0-future = "0.3"
+
+# misc
+uuid = { version = "1", features = ["v4"] }
+bytes = "1"
+futures-util = "0.3"
 
 # cli
 clap = { version = "4", features = ["derive"] }

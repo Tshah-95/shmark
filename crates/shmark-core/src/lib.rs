@@ -1,14 +1,17 @@
 pub mod device;
+pub mod groups;
 pub mod identity;
 pub mod node;
 pub mod paths;
+pub mod shares;
 pub mod state;
 
 pub use device::{Device, DeviceCert, SignedDeviceCert};
+pub use groups::{make_local_group, Groups, LocalGroup};
 pub use identity::Identity;
+pub use node::Node;
+pub use shares::{ShareItem, ShareRecord, Shares};
 pub use state::AppState;
-
-pub const SHMARK_ALPN: &[u8] = b"shmark/0";
 
 pub fn now_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};

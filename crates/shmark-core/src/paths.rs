@@ -32,3 +32,7 @@ pub fn pid_path() -> Result<PathBuf> {
 pub fn log_path() -> Result<PathBuf> {
     Ok(data_dir()?.join("shmark.log"))
 }
+
+pub fn groups_state_path() -> Result<PathBuf> {
+    Ok(data_dir()?.join("groups.json"))
+}

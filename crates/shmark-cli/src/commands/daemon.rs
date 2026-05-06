@@ -48,7 +48,7 @@ async fn foreground(display_name: Option<String>) -> Result<()> {
         identity_pubkey = %state.identity.pubkey_hex(),
         display_name = %state.identity.display_name,
         node_pubkey = %state.device.node_pubkey_hex(),
-        endpoint_id = %state.endpoint.id(),
+        endpoint_id = %state.node.endpoint.id(),
         "daemon ready"
     );
 
@@ -74,7 +74,9 @@ async fn foreground(display_name: Option<String>) -> Result<()> {
         }
     }
 
-    state.endpoint.close().await;
+    if let Err(e) = state.node.shutdown().await {
+        tracing::warn!(error = ?e, "node shutdown returned error");
+    }
     info!("daemon stopped cleanly");
     Ok(())
 }
