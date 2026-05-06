@@ -1,6 +1,11 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
-import { useCallback, useEffect, useState } from "react";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   rpc,
   type Identity,
@@ -28,6 +33,9 @@ export function App() {
   const [showCreate, setShowCreate] = useState(false);
   const [showShareFromClipboard, setShowShareFromClipboard] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const seenShareIdsRef = useRef<Set<string>>(new Set());
+  const notificationsReadyRef = useRef<boolean>(false);
+  const firstLoadRef = useRef<boolean>(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -40,6 +48,21 @@ export function App() {
       setGroups(gs);
       setShares(ss);
       setBootError(null);
+
+      // Fire native notifications for shares we haven't seen yet that
+      // weren't authored by us. Skip the first poll so we don't pop a
+      // notification for every existing share at app startup.
+      const newSeen = seenShareIdsRef.current;
+      const isFirst = firstLoadRef.current;
+      const fresh = ss.filter((s) => !newSeen.has(s.share.share_id));
+      for (const s of ss) newSeen.add(s.share.share_id);
+      firstLoadRef.current = false;
+      if (!isFirst && id) {
+        for (const s of fresh) {
+          if (s.share.author_identity === id.identity_pubkey) continue;
+          void notifyNewShare(s, notificationsReadyRef);
+        }
+      }
     } catch (e) {
       setBootError(e instanceof Error ? e.message : String(e));
     }
@@ -50,6 +73,25 @@ export function App() {
     const t = window.setInterval(refresh, 3000);
     return () => window.clearInterval(t);
   }, [refresh]);
+
+  useEffect(() => {
+    // Ask for notification permission once on mount. Result is cached on
+    // notificationsReadyRef so we don't re-prompt every notification fire.
+    (async () => {
+      try {
+        const granted = await isPermissionGranted();
+        if (granted) {
+          notificationsReadyRef.current = true;
+          return;
+        }
+        const result = await requestPermission();
+        notificationsReadyRef.current = result === "granted";
+      } catch {
+        // Notification plugin unavailable (e.g. dev preview without
+        // permission set). Fail silently.
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
@@ -234,6 +276,21 @@ export function App() {
   );
 }
 
+async function notifyNewShare(
+  s: ListedShare,
+  ready: React.MutableRefObject<boolean>,
+) {
+  if (!ready.current) return;
+  try {
+    sendNotification({
+      title: `New share in ${s.group}`,
+      body: `${s.share.name}${s.share.description ? " — " + s.share.description : ""}`,
+    });
+  } catch {
+    // ignore
+  }
+}
+
 function Welcome({
   hasGroups,
   onCreate,
@@ -350,9 +407,14 @@ function GroupView({
                       {s.share.description}
                     </div>
                   )}
-                  <div className="text-xs text-zinc-500 mt-1 font-mono">
-                    by {shortHex(s.share.author_identity, 6)} · blob{" "}
-                    {shortHex(s.share.items[0]?.blob_hash ?? "", 6)}
+                  <div className="text-xs text-zinc-500 mt-1 font-mono flex items-center gap-2">
+                    <span>by {shortHex(s.share.author_identity, 6)}</span>
+                    <span>· blob {shortHex(s.share.items[0]?.blob_hash ?? "", 6)}</span>
+                    {s.all_local ? (
+                      <span className="text-emerald-400 not-italic">↓ on device</span>
+                    ) : (
+                      <span className="text-zinc-500 not-italic">⤓ syncing</span>
+                    )}
                   </div>
                 </button>
               </li>

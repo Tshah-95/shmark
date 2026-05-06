@@ -46,10 +46,17 @@ export type ShareRecord = {
   created_at: number;
 };
 
+export type ShareItemStatus = {
+  blob_hash: string;
+  is_local: boolean;
+};
+
 export type ListedShare = {
   group: string;
   namespace_id: string;
   share: ShareRecord;
+  items_status: ShareItemStatus[];
+  all_local: boolean;
 };
 
 export type ShareCode = {

@@ -226,14 +226,30 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
             } else {
                 state.groups.read().await.list()
             };
+
+            let auto_pin = state.settings.read().await.auto_pin;
+            let my_identity = state.identity.pubkey_hex();
+
             let mut out = Vec::new();
             for g in groups {
-                let shares = state.shares.list(&g).await?;
+                let shares = state.shares.list_with_status(&g).await?;
                 for s in shares {
+                    // If auto_pin is on and there's a non-local blob from
+                    // someone other than us, kick off a background fetch.
+                    // The fetch is best-effort and won't block this list.
+                    if auto_pin && !s.all_local && s.record.author_identity != my_identity {
+                        let shares_clone = state.shares.clone();
+                        let record_clone = s.record.clone();
+                        tokio::spawn(async move {
+                            shares_clone.auto_pin(&record_clone).await;
+                        });
+                    }
                     out.push(json!({
                         "group": g.local_alias,
                         "namespace_id": g.namespace_id,
-                        "share": s,
+                        "share": s.record,
+                        "items_status": s.items_status,
+                        "all_local": s.all_local,
                     }));
                 }
             }

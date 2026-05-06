@@ -56,7 +56,8 @@ fn main() {
     info!(headless, "shmark-desktop launching");
 
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_clipboard_manager::init());
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init());
 
     #[cfg(desktop)]
     {

@@ -20,6 +20,23 @@ pub struct ShareItem {
     pub size_bytes: u64,
 }
 
+/// Per-item local-presence info. Computed at list-time and not stored in
+/// the doc — so it always reflects the current state of this device.
+#[derive(Debug, Clone, Serialize)]
+pub struct ShareItemStatus {
+    pub blob_hash: String,
+    pub is_local: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ShareWithStatus {
+    #[serde(flatten)]
+    pub record: ShareRecord,
+    pub items_status: Vec<ShareItemStatus>,
+    /// True iff every item's blob is locally available.
+    pub all_local: bool,
+}
+
 /// The full record stored as a doc value at key "shares/<share_id>".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareRecord {
@@ -296,6 +313,80 @@ impl Shares {
             .await?
             .into_iter()
             .find(|r| r.share_id == share_id))
+    }
+
+    /// Like `list` but augments each share with per-item local-presence.
+    /// Heavier than `list` because it queries the blob store for each item.
+    pub async fn list_with_status(
+        &self,
+        group: &LocalGroup,
+    ) -> Result<Vec<ShareWithStatus>> {
+        let records = self.list(group).await?;
+        let mut out = Vec::with_capacity(records.len());
+        for record in records {
+            let mut items_status = Vec::with_capacity(record.items.len());
+            let mut all_local = true;
+            for item in &record.items {
+                let hash = match iroh_blobs::Hash::from_str(&item.blob_hash) {
+                    Ok(h) => h,
+                    Err(_) => {
+                        items_status.push(ShareItemStatus {
+                            blob_hash: item.blob_hash.clone(),
+                            is_local: false,
+                        });
+                        all_local = false;
+                        continue;
+                    }
+                };
+                let is_local = self
+                    .node
+                    .blobs
+                    .blobs()
+                    .has(hash)
+                    .await
+                    .unwrap_or(false);
+                if !is_local {
+                    all_local = false;
+                }
+                items_status.push(ShareItemStatus {
+                    blob_hash: item.blob_hash.clone(),
+                    is_local,
+                });
+            }
+            out.push(ShareWithStatus {
+                record,
+                items_status,
+                all_local,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Best-effort background download of any missing blobs from a share.
+    /// Used by the auto-pin path — fires-and-forgets, no error propagation.
+    pub async fn auto_pin(&self, record: &ShareRecord) {
+        let downloader = self.node.blobs.downloader(&self.node.endpoint);
+        let provider = match iroh::EndpointId::from_str(&record.author_node) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        for item in &record.items {
+            let Ok(hash) = iroh_blobs::Hash::from_str(&item.blob_hash) else {
+                continue;
+            };
+            if self
+                .node
+                .blobs
+                .blobs()
+                .has(hash)
+                .await
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            // Idempotent: a concurrent fetch is fine.
+            let _ = downloader.download(hash, vec![provider]).await;
+        }
     }
 
     pub async fn read_item(
