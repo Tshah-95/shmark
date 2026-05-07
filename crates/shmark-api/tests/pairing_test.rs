@@ -81,7 +81,7 @@ async fn pair_two_devices_replicates_identity_and_groups() {
         "B should now report A's identity_pubkey"
     );
     assert_eq!(
-        join_resp["restart_required"].as_bool().unwrap_or(false),
+        join_resp["reload_requested"].as_bool().unwrap_or(false),
         true
     );
     let imported = join_resp["imported_groups"].as_array().unwrap();

@@ -1,5 +1,4 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   isPermissionGranted,
   requestPermission,
@@ -11,15 +10,17 @@ import {
   type Identity,
   type ListedShare,
   type LocalGroup,
-  type ShareCode,
   type ShareRecord,
 } from "./api";
 import { SettingsPanel } from "./Settings";
 import { ShareFromClipboard } from "./ShareFromClipboard";
 import { ShareView } from "./render/ShareView";
 import { formatRelativeTime, shortHex } from "./util";
+import { GroupView } from "./views/GroupView";
+import { InboxView } from "./views/InboxView";
 
 type View =
+  | { kind: "inbox" }
   | { kind: "group"; alias: string }
   | { kind: "share"; alias: string; share: ShareRecord };
 
@@ -27,12 +28,13 @@ export function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [groups, setGroups] = useState<LocalGroup[]>([]);
   const [shares, setShares] = useState<ListedShare[]>([]);
-  const [view, setView] = useState<View | null>(null);
+  const [view, setView] = useState<View>({ kind: "inbox" });
   const [bootError, setBootError] = useState<string | null>(null);
   const [showJoin, setShowJoin] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showShareFromClipboard, setShowShareFromClipboard] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [reloadedToast, setReloadedToast] = useState<string | null>(null);
   const seenShareIdsRef = useRef<Set<string>>(new Set());
   const notificationsReadyRef = useRef<boolean>(false);
   const firstLoadRef = useRef<boolean>(true);
@@ -49,9 +51,6 @@ export function App() {
       setShares(ss);
       setBootError(null);
 
-      // Fire native notifications for shares we haven't seen yet that
-      // weren't authored by us. Skip the first poll so we don't pop a
-      // notification for every existing share at app startup.
       const newSeen = seenShareIdsRef.current;
       const isFirst = firstLoadRef.current;
       const fresh = ss.filter((s) => !newSeen.has(s.share.share_id));
@@ -75,8 +74,6 @@ export function App() {
   }, [refresh]);
 
   useEffect(() => {
-    // Ask for notification permission once on mount. Result is cached on
-    // notificationsReadyRef so we don't re-prompt every notification fire.
     (async () => {
       try {
         const granted = await isPermissionGranted();
@@ -87,29 +84,59 @@ export function App() {
         const result = await requestPermission();
         notificationsReadyRef.current = result === "granted";
       } catch {
-        // Notification plugin unavailable (e.g. dev preview without
-        // permission set). Fail silently.
+        // notification plugin unavailable
       }
     })();
   }, []);
 
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
+    let unlistenHotkey: UnlistenFn | null = null;
+    let unlistenReload: UnlistenFn | null = null;
     (async () => {
       try {
-        unlisten = await listen("shmark://hotkey/share", () => {
+        unlistenHotkey = await listen("shmark://hotkey/share", () => {
           setShowShareFromClipboard(true);
         });
+        unlistenReload = await listen<{
+          identity_pubkey: string;
+          display_name: string;
+        }>("shmark://reloaded", (event) => {
+          seenShareIdsRef.current = new Set();
+          firstLoadRef.current = true;
+          setReloadedToast(
+            `✓ Pairing complete — now signed in as ${event.payload.display_name}.`,
+          );
+          window.setTimeout(() => setReloadedToast(null), 5000);
+          void refresh();
+        });
       } catch {
-        // Tauri event subsystem may not be available in non-Tauri runtimes
-        // (e.g. running the frontend in plain Vite for development); fail
-        // open silently.
+        // event subsystem unavailable
       }
     })();
     return () => {
-      if (unlisten) unlisten();
+      if (unlistenHotkey) unlistenHotkey();
+      if (unlistenReload) unlistenReload();
     };
-  }, []);
+  }, [refresh]);
+
+  // Open a group: navigate + mark its unread shares as seen.
+  async function selectGroup(alias: string) {
+    setView({ kind: "group", alias });
+    try {
+      await rpc("groups_mark_seen", { name_or_id: alias });
+    } catch {
+      // best-effort — UI still works
+    }
+  }
+
+  async function openShare(alias: string, share: ShareRecord) {
+    setView({ kind: "share", alias, share });
+    try {
+      await rpc("groups_mark_seen", { name_or_id: alias });
+    } catch {
+      // ignore
+    }
+  }
 
   if (bootError) {
     return (
@@ -132,18 +159,61 @@ export function App() {
     );
   }
 
+  const sharesForView =
+    view.kind === "group"
+      ? shares.filter(
+          (s) =>
+            s.group === view.alias ||
+            groups.find((g) => g.local_alias === view.alias)?.namespace_id ===
+              s.namespace_id,
+        )
+      : shares;
+
+  const totalUnread = groups.reduce(
+    (sum, g) => sum + (g.unread_count ?? 0),
+    0,
+  );
+
   return (
-    <div className="h-full grid grid-cols-[240px_minmax(0,1fr)]">
+    <div className="h-full grid grid-cols-[260px_minmax(0,1fr)]">
       <aside className="border-r border-zinc-800 bg-zinc-900/40 flex flex-col">
         <div className="px-4 py-4 border-b border-zinc-800">
           <div className="text-sm font-semibold tracking-tight">shmark</div>
           {identity && (
-            <div className="text-xs text-zinc-500 mt-0.5 font-mono">
+            <div className="text-xs text-zinc-500 mt-0.5 font-mono truncate">
               {identity.display_name} · {shortHex(identity.identity_pubkey, 6)}
             </div>
           )}
         </div>
-        <div className="px-3 py-2 flex items-center justify-between">
+
+        <div className="px-3 pt-3 pb-2">
+          <button
+            onClick={() => setShowShareFromClipboard(true)}
+            className="w-full rounded bg-zinc-100 text-zinc-900 hover:bg-white px-3 py-1.5 text-sm font-medium"
+            data-testid="sidebar-share-clipboard"
+          >
+            + Share clipboard
+          </button>
+        </div>
+
+        <button
+          onClick={() => setView({ kind: "inbox" })}
+          className={`mx-1.5 rounded px-2.5 py-1.5 text-sm text-left transition-colors flex items-center justify-between ${
+            view.kind === "inbox"
+              ? "bg-zinc-800 text-zinc-50"
+              : "text-zinc-300 hover:bg-zinc-800/60"
+          }`}
+          data-testid="sidebar-inbox"
+        >
+          <span>📥 Inbox</span>
+          {totalUnread > 0 && (
+            <span className="text-[10px] tabular-nums bg-blue-500/80 text-white rounded-full px-1.5 min-w-[1.25rem] text-center">
+              {totalUnread}
+            </span>
+          )}
+        </button>
+
+        <div className="px-3 pt-3 pb-1 flex items-center justify-between">
           <span className="text-xs uppercase text-zinc-500 font-medium tracking-wider">
             Groups
           </span>
@@ -166,6 +236,7 @@ export function App() {
             </button>
           </div>
         </div>
+
         <div className="flex-1 overflow-y-auto px-1.5 pb-2 flex flex-col">
           {groups.length === 0 && (
             <div className="text-xs text-zinc-500 italic px-2 py-1.5">
@@ -173,31 +244,42 @@ export function App() {
             </div>
           )}
           <div className="flex-1">
-          {groups.map((g) => {
-            const shareCount = shares.filter(
-              (s) => s.namespace_id === g.namespace_id,
-            ).length;
-            const active = view?.kind && view.alias === g.local_alias;
-            return (
-              <button
-                key={g.namespace_id}
-                onClick={() => setView({ kind: "group", alias: g.local_alias })}
-                className={`w-full text-left rounded px-2.5 py-1.5 text-sm transition-colors ${
-                  active
-                    ? "bg-zinc-800 text-zinc-50"
-                    : "text-zinc-300 hover:bg-zinc-800/60"
-                }`}
-                data-testid={`group-${g.local_alias}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate">{g.local_alias}</span>
-                  <span className="text-[10px] text-zinc-500 tabular-nums">
-                    {shareCount}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+            {groups.map((g) => {
+              const active =
+                view.kind === "group" && view.alias === g.local_alias;
+              const unread = g.unread_count ?? 0;
+              const latest = g.latest_share_at ?? 0;
+              return (
+                <button
+                  key={g.namespace_id}
+                  onClick={() => void selectGroup(g.local_alias)}
+                  className={`w-full text-left rounded px-2.5 py-1.5 text-sm transition-colors ${
+                    active
+                      ? "bg-zinc-800 text-zinc-50"
+                      : "text-zinc-300 hover:bg-zinc-800/60"
+                  }`}
+                  data-testid={`group-${g.local_alias}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`truncate ${unread > 0 ? "font-semibold text-zinc-50" : ""}`}
+                    >
+                      {g.local_alias}
+                    </span>
+                    {unread > 0 ? (
+                      <span className="text-[10px] tabular-nums bg-blue-500/80 text-white rounded-full px-1.5 min-w-[1.25rem] text-center">
+                        {unread}
+                      </span>
+                    ) : null}
+                  </div>
+                  {latest > 0 && (
+                    <div className="text-[10px] text-zinc-500 tabular-nums mt-0.5">
+                      {formatRelativeTime(latest)}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
           <button
             onClick={() => setShowSettings(true)}
@@ -210,29 +292,24 @@ export function App() {
       </aside>
 
       <main className="overflow-hidden flex flex-col">
-        {view === null && (
-          <Welcome
-            hasGroups={groups.length > 0}
-            onCreate={() => setShowCreate(true)}
-            onJoin={() => setShowJoin(true)}
+        {view.kind === "inbox" && (
+          <InboxView
+            identity={identity}
+            shares={shares}
+            onOpenShare={(alias, share) => void openShare(alias, share)}
+            onShareClipboard={() => setShowShareFromClipboard(true)}
           />
         )}
-        {view?.kind === "group" && (
+        {view.kind === "group" && (
           <GroupView
             alias={view.alias}
-            shares={shares.filter(
-              (s) =>
-                s.group === view.alias ||
-                groups.find((g) => g.local_alias === view.alias)?.namespace_id ===
-                  s.namespace_id,
-            )}
-            onOpenShare={(share) =>
-              setView({ kind: "share", alias: view.alias, share })
-            }
-            onCopiedShareCode={() => void 0}
+            identity={identity}
+            shares={sharesForView}
+            onOpenShare={(share) => void openShare(view.alias, share)}
+            onShareClipboard={() => setShowShareFromClipboard(true)}
           />
         )}
-        {view?.kind === "share" && (
+        {view.kind === "share" && (
           <ShareView
             groupAlias={view.alias}
             share={view.share}
@@ -244,18 +321,20 @@ export function App() {
       {showCreate && (
         <CreateGroupModal
           onClose={() => setShowCreate(false)}
-          onCreated={async () => {
+          onCreated={async (alias) => {
             setShowCreate(false);
             await refresh();
+            setView({ kind: "group", alias });
           }}
         />
       )}
       {showJoin && (
         <JoinGroupModal
           onClose={() => setShowJoin(false)}
-          onJoined={async () => {
+          onJoined={async (alias) => {
             setShowJoin(false);
             await refresh();
+            if (alias) setView({ kind: "group", alias });
           }}
         />
       )}
@@ -271,6 +350,11 @@ export function App() {
       )}
       {showSettings && (
         <SettingsPanel onClose={() => setShowSettings(false)} />
+      )}
+      {reloadedToast && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border border-emerald-700 bg-emerald-950/90 backdrop-blur px-4 py-2.5 text-sm text-emerald-100 shadow-lg max-w-sm">
+          {reloadedToast}
+        </div>
       )}
     </div>
   );
@@ -291,147 +375,12 @@ async function notifyNewShare(
   }
 }
 
-function Welcome({
-  hasGroups,
-  onCreate,
-  onJoin,
-}: {
-  hasGroups: boolean;
-  onCreate: () => void;
-  onJoin: () => void;
-}) {
-  return (
-    <div className="h-full flex items-center justify-center p-10">
-      <div className="max-w-md text-center">
-        <div className="text-4xl font-semibold tracking-tight mb-2">shmark</div>
-        <div className="text-zinc-400 mb-6">
-          {hasGroups
-            ? "Pick a group on the left to see shared markdown."
-            : "Create a group or join one with a share code."}
-        </div>
-        <div className="flex gap-2 justify-center">
-          <button
-            onClick={onCreate}
-            className="rounded bg-zinc-100 text-zinc-900 hover:bg-white px-4 py-2 text-sm font-medium"
-          >
-            New group
-          </button>
-          <button
-            onClick={onJoin}
-            className="rounded border border-zinc-700 text-zinc-200 hover:bg-zinc-800 px-4 py-2 text-sm font-medium"
-          >
-            Join with code
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function GroupView({
-  alias,
-  shares,
-  onOpenShare,
-  onCopiedShareCode,
-}: {
-  alias: string;
-  shares: ListedShare[];
-  onOpenShare: (share: ShareRecord) => void;
-  onCopiedShareCode: () => void;
-}) {
-  const [codeNotice, setCodeNotice] = useState<string | null>(null);
-
-  async function copyShareCode() {
-    try {
-      const result = await rpc<ShareCode>("groups_share_code", {
-        name_or_id: alias,
-        read_only: false,
-      });
-      // Use the Tauri clipboard plugin instead of navigator.clipboard so we
-      // bypass the webview's secure-context restrictions in dev mode.
-      await clipboardWriteText(result.code);
-      setCodeNotice("share code copied to clipboard");
-      onCopiedShareCode();
-      window.setTimeout(() => setCodeNotice(null), 2500);
-    } catch (e) {
-      setCodeNotice(`failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <header className="border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
-        <div>
-          <div className="text-base font-medium">{alias}</div>
-          <div className="text-xs text-zinc-500">
-            {shares.length} share{shares.length === 1 ? "" : "s"}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {codeNotice && (
-            <span className="text-xs text-zinc-400">{codeNotice}</span>
-          )}
-          <button
-            onClick={() => void copyShareCode()}
-            className="text-sm rounded border border-zinc-700 hover:bg-zinc-800 px-3 py-1.5"
-            data-testid="copy-share-code"
-          >
-            Copy share code
-          </button>
-        </div>
-      </header>
-      <div className="flex-1 overflow-auto">
-        {shares.length === 0 ? (
-          <div className="text-zinc-500 italic px-6 py-8 text-sm">
-            No shares yet. Drop a markdown file in via the CLI:{" "}
-            <code className="px-1 rounded bg-zinc-900 text-zinc-300">
-              shmark share path/to/file.md --to {alias}
-            </code>
-          </div>
-        ) : (
-          <ul className="divide-y divide-zinc-900">
-            {shares.map((s) => (
-              <li key={s.share.share_id}>
-                <button
-                  onClick={() => onOpenShare(s.share)}
-                  className="w-full text-left px-6 py-3 hover:bg-zinc-900/60 transition-colors"
-                >
-                  <div className="flex items-baseline justify-between gap-3">
-                    <div className="font-medium truncate">{s.share.name}</div>
-                    <div className="text-xs text-zinc-500 tabular-nums whitespace-nowrap">
-                      {formatRelativeTime(s.share.created_at)}
-                    </div>
-                  </div>
-                  {s.share.description && (
-                    <div className="text-sm text-zinc-400 truncate mt-0.5">
-                      {s.share.description}
-                    </div>
-                  )}
-                  <div className="text-xs text-zinc-500 mt-1 font-mono flex items-center gap-2">
-                    <span>by {shortHex(s.share.author_identity, 6)}</span>
-                    <span>· blob {shortHex(s.share.items[0]?.blob_hash ?? "", 6)}</span>
-                    {s.all_local ? (
-                      <span className="text-emerald-400 not-italic">↓ on device</span>
-                    ) : (
-                      <span className="text-zinc-500 not-italic">⤓ syncing</span>
-                    )}
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function CreateGroupModal({
   onClose,
   onCreated,
 }: {
   onClose: () => void;
-  onCreated: () => Promise<void> | void;
+  onCreated: (alias: string) => Promise<void> | void;
 }) {
   const [alias, setAlias] = useState("");
   const [busy, setBusy] = useState(false);
@@ -444,7 +393,7 @@ function CreateGroupModal({
     setError(null);
     try {
       await rpc<LocalGroup>("groups_new", { alias: alias.trim() });
-      await onCreated();
+      await onCreated(alias.trim());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -492,7 +441,7 @@ function JoinGroupModal({
   onJoined,
 }: {
   onClose: () => void;
-  onJoined: () => Promise<void> | void;
+  onJoined: (alias: string | null) => Promise<void> | void;
 }) {
   const [code, setCode] = useState("");
   const [alias, setAlias] = useState("");
@@ -505,11 +454,11 @@ function JoinGroupModal({
     setBusy(true);
     setError(null);
     try {
-      await rpc<LocalGroup>("groups_join", {
+      const r = await rpc<LocalGroup>("groups_join", {
         code: code.trim(),
         alias: alias.trim() || null,
       });
-      await onJoined();
+      await onJoined(r.local_alias);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

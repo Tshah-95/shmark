@@ -13,21 +13,41 @@ type SettingsBundle = {
   default_roots: string[];
 };
 
+type Contact = {
+  identity_pubkey: string;
+  display_name: string;
+  note: string | null;
+  added_at: number;
+};
+
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [bundle, setBundle] = useState<SettingsBundle | null>(null);
   const [hotkey, setHotkey] = useState("");
   const [autoPin, setAutoPin] = useState(true);
   const [roots, setRoots] = useState<string[]>([]);
   const [newRoot, setNewRoot] = useState("");
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+
+  async function loadContacts() {
+    try {
+      const cs = await rpc<Contact[]>("contacts_list");
+      setContacts(Array.isArray(cs) ? cs : []);
+    } catch {
+      // ignore
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const b = await rpc<SettingsBundle>("settings_get");
+        const [b] = await Promise.all([
+          rpc<SettingsBundle>("settings_get"),
+          loadContacts(),
+        ]);
         if (cancelled) return;
         setBundle(b);
         setHotkey(b.settings.hotkey);
@@ -138,6 +158,16 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                   Auto-fetch incoming shares (recommended)
                 </span>
               </label>
+            </Section>
+
+            <Section
+              title="Contacts"
+              hint="Free-text notes per identity, used by the agent when deciding where to share. Local-only — never sent to peers."
+            >
+              <ContactsEditor
+                contacts={contacts}
+                onChange={() => void loadContacts()}
+              />
             </Section>
 
             {error && <div className="text-xs text-red-300">{error}</div>}
@@ -287,6 +317,182 @@ function normalizeKey(key: string, code: string): string | null {
   // Fall back to event.code (e.g. Comma, Period, Slash)
   if (code) return code;
   return null;
+}
+
+function ContactsEditor({
+  contacts,
+  onChange,
+}: {
+  contacts: Contact[];
+  onChange: () => void;
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [draftPubkey, setDraftPubkey] = useState("");
+  const [draftName, setDraftName] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editingNote, setEditingNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function add() {
+    setError(null);
+    try {
+      await rpc("contacts_upsert", {
+        identity_pubkey: draftPubkey.trim(),
+        display_name: draftName.trim(),
+      });
+      setDraftPubkey("");
+      setDraftName("");
+      setShowAdd(false);
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function remove(c: Contact) {
+    try {
+      await rpc("contacts_remove", { name_or_pubkey: c.identity_pubkey });
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function saveNote(c: Contact) {
+    try {
+      await rpc("contacts_set_note", {
+        name_or_pubkey: c.identity_pubkey,
+        note: editingNote.trim().length === 0 ? null : editingNote.trim(),
+      });
+      setEditing(null);
+      onChange();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      {contacts.length === 0 && (
+        <div className="text-xs text-zinc-500 italic">no contacts yet</div>
+      )}
+      <ul className="space-y-1.5">
+        {contacts.map((c) => (
+          <li
+            key={c.identity_pubkey}
+            className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium truncate">
+                  {c.display_name}
+                </div>
+                <div className="text-[10px] text-zinc-500 font-mono truncate">
+                  {c.identity_pubkey}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(c.identity_pubkey);
+                    setEditingNote(c.note ?? "");
+                  }}
+                  className="text-xs text-zinc-400 hover:text-zinc-100"
+                >
+                  edit note
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void remove(c)}
+                  className="text-xs text-zinc-500 hover:text-red-300"
+                >
+                  remove
+                </button>
+              </div>
+            </div>
+            {editing === c.identity_pubkey ? (
+              <div className="mt-2 flex gap-2">
+                <input
+                  autoFocus
+                  value={editingNote}
+                  onChange={(e) => setEditingNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveNote(c);
+                    if (e.key === "Escape") setEditing(null);
+                  }}
+                  placeholder="routing note (e.g. 'east coast, prefers summaries')"
+                  className="flex-1 rounded bg-zinc-950 border border-zinc-700 px-2 py-1 text-xs focus:outline-none focus:border-zinc-500"
+                />
+                <button
+                  onClick={() => void saveNote(c)}
+                  className="text-xs text-zinc-100"
+                >
+                  save
+                </button>
+                <button
+                  onClick={() => setEditing(null)}
+                  className="text-xs text-zinc-500"
+                >
+                  cancel
+                </button>
+              </div>
+            ) : c.note ? (
+              <div className="mt-1.5 text-xs text-zinc-300">{c.note}</div>
+            ) : (
+              <div className="mt-1.5 text-xs text-zinc-600 italic">
+                no note
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {showAdd ? (
+        <div className="rounded border border-zinc-800 bg-zinc-900 p-3 space-y-2">
+          <input
+            autoFocus
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            placeholder="display name (what you call them)"
+            className="w-full rounded bg-zinc-950 border border-zinc-700 px-2.5 py-1.5 text-sm focus:outline-none focus:border-zinc-500"
+          />
+          <input
+            value={draftPubkey}
+            onChange={(e) => setDraftPubkey(e.target.value)}
+            placeholder="identity_pubkey (64-char hex)"
+            className="w-full rounded bg-zinc-950 border border-zinc-700 px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:border-zinc-500"
+          />
+          {error && <div className="text-xs text-red-300">{error}</div>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAdd(false)}
+              className="text-xs text-zinc-400"
+            >
+              cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void add()}
+              disabled={!draftName.trim() || !draftPubkey.trim()}
+              className="rounded bg-zinc-100 text-zinc-900 hover:bg-white px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowAdd(true)}
+          className="rounded border border-zinc-800 hover:bg-zinc-800/60 px-3 py-1.5 text-xs text-zinc-300 w-full"
+          data-testid="settings-add-contact"
+        >
+          + Add contact
+        </button>
+      )}
+    </div>
+  );
 }
 
 function RootsEditor({

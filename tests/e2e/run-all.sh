@@ -16,6 +16,7 @@ specs=(
   tests/e2e/copy-share-code.spec.ts
   tests/e2e/folder-share.spec.ts
   tests/e2e/settings.spec.ts
+  tests/e2e/inbox.spec.ts
 )
 
 failed=0

@@ -28,6 +28,10 @@ export type LocalGroup = {
   local_alias: string;
   created_locally: boolean;
   joined_at: number;
+  last_seen_at?: number;
+  /// Server-augmented fields from groups_list:
+  latest_share_at?: number;
+  unread_count?: number;
 };
 
 export type ShareItem = {

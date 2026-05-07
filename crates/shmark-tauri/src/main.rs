@@ -18,7 +18,9 @@ use tracing::{info, warn};
 const TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-icon.png");
 
 struct ShmarkAppState {
-    inner: Arc<AppState>,
+    /// Wrapped so the watcher task can swap a freshly-bootstrapped AppState
+    /// into place without restarting the process — used after pairing.
+    inner: tokio::sync::RwLock<Arc<AppState>>,
 }
 
 #[tauri::command]
@@ -27,7 +29,8 @@ async fn rpc(
     method: String,
     params: Option<Value>,
 ) -> Result<Value, String> {
-    shmark_api::dispatch(&method, params.unwrap_or(Value::Null), &state.inner)
+    let app_state = state.inner.read().await.clone();
+    shmark_api::dispatch(&method, params.unwrap_or(Value::Null), &app_state)
         .await
         .map_err(|e| {
             let mut msg = format!("{e}");
@@ -100,8 +103,11 @@ fn main() {
                 }
 
                 // Wire up the dev-bridge channel before booting AppState so
-                // the test driver path is live for every operation.
+                // the test driver path is live for every operation. The
+                // sender is cloned per AppState boot so reloads keep the
+                // dev consumer alive.
                 let (dev_tx, dev_rx) = dev::channel();
+                let dev_tx_for_reload = dev_tx.clone();
                 let app_state =
                     AppState::boot_with_dev("shmark", Some(dev_tx)).await?;
                 info!(
@@ -122,7 +128,9 @@ fn main() {
                     }
                 });
 
-                handle.manage(ShmarkAppState { inner: arc.clone() });
+                handle.manage(ShmarkAppState {
+                    inner: tokio::sync::RwLock::new(arc.clone()),
+                });
 
                 // Headless mode: hide the main window so test runs don't
                 // appear on the user's screen. Window still has a webview,
@@ -141,6 +149,12 @@ fn main() {
                     register_hotkey(&handle, &initial);
                     spawn_hotkey_watcher(handle.clone(), arc.clone(), initial);
                 }
+
+                // Watch for reload requests (signalled by pair_join). When
+                // fired, drop and re-bootstrap AppState in place so the
+                // new identity from disk takes effect without a process
+                // restart.
+                spawn_reload_watcher(handle.clone(), arc.clone(), dev_tx_for_reload);
                 Ok::<_, anyhow::Error>(())
             })
             .map_err(|e| -> Box<dyn std::error::Error> { format!("{e:#}").into() })?;
@@ -209,6 +223,54 @@ fn focus_main<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+fn spawn_reload_watcher<R: tauri::Runtime>(
+    handle: tauri::AppHandle<R>,
+    initial_state: Arc<AppState>,
+    dev_tx: shmark_core::dev::DevSender,
+) {
+    tauri::async_runtime::spawn(async move {
+        let mut current = initial_state;
+        loop {
+            current.reload_requested.notified().await;
+            info!("reload requested — re-bootstrapping AppState");
+            let new_state = match AppState::boot_with_dev("shmark", Some(dev_tx.clone())).await {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    warn!(error = ?e, "AppState reload failed; keeping old state");
+                    continue;
+                }
+            };
+
+            // Swap in the new state.
+            if let Some(managed) = handle.try_state::<ShmarkAppState>() {
+                *managed.inner.write().await = new_state.clone();
+            }
+
+            // Tell the frontend so it can refresh + show a toast.
+            if let Err(e) = handle.emit(
+                "shmark://reloaded",
+                serde_json::json!({
+                    "identity_pubkey": new_state.identity.pubkey_hex(),
+                    "display_name": new_state.identity.display_name,
+                }),
+            ) {
+                warn!(error = ?e, "emit shmark://reloaded failed");
+            }
+
+            // Shut down the OLD AppState's iroh node so resources are
+            // released cleanly before drop. We do this AFTER the swap so
+            // any in-flight RPC has migrated.
+            let old = std::mem::replace(&mut current, new_state);
+            let _ = old.node.shutdown().await;
+
+            info!(
+                identity = %current.identity.pubkey_hex(),
+                "reload complete"
+            );
+        }
+    });
 }
 
 #[cfg(desktop)]

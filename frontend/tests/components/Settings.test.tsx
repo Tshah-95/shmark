@@ -34,6 +34,7 @@ function installMockIpc(handler?: (method: string, params: unknown) => unknown) 
           auto_pin: p?.auto_pin ?? defaultBundle.settings.auto_pin,
         };
       }
+      if (m === "contacts_list") return [];
     }
     return undefined;
   });

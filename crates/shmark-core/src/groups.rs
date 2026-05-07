@@ -17,6 +17,11 @@ pub struct LocalGroup {
     /// True iff this device created the group (vs. joined someone else's).
     pub created_locally: bool,
     pub joined_at: u64,
+    /// Last time this user looked at this group's shares. Used to compute
+    /// the unread count. Defaults to 0 (everything counts as unread on
+    /// first launch — the user explicitly opens the group to clear it).
+    #[serde(default)]
+    pub last_seen_at: u64,
 }
 
 /// In-memory index of LocalGroup, persisted to a single JSON file.
@@ -84,6 +89,18 @@ impl Groups {
         Ok(snapshot)
     }
 
+    pub fn mark_seen(&mut self, name_or_id: &str, when: u64) -> Result<LocalGroup> {
+        let key = self.resolve_key(name_or_id)?;
+        let entry = self
+            .by_namespace
+            .get_mut(&key)
+            .ok_or_else(|| anyhow!("group disappeared mid-mark-seen"))?;
+        entry.last_seen_at = when;
+        let snapshot = entry.clone();
+        self.save()?;
+        Ok(snapshot)
+    }
+
     pub fn remove(&mut self, name_or_id: &str) -> Result<LocalGroup> {
         let key = self.resolve_key(name_or_id)?;
         let removed = self
@@ -124,5 +141,6 @@ pub fn make_local_group(namespace_id: String, alias: String, created_locally: bo
         local_alias: alias,
         created_locally,
         joined_at: now_secs(),
+        last_seen_at: 0,
     }
 }

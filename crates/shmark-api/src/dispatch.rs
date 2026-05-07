@@ -58,8 +58,59 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
         }
 
         "groups_list" => {
-            let v = state.groups.read().await.list();
-            Ok(serde_json::to_value(v)?)
+            // Augment each group with unread_count + latest_share_at so
+            // the UI can sort by recent activity and badge new shares.
+            let groups = state.groups.read().await.list();
+            let my_identity = state.identity.pubkey_hex();
+            let mut out = Vec::with_capacity(groups.len());
+            for g in groups {
+                let shares = state.shares.list(&g).await.unwrap_or_default();
+                let latest_share_at = shares
+                    .iter()
+                    .map(|s| s.created_at)
+                    .max()
+                    .unwrap_or(0);
+                let unread_count = shares
+                    .iter()
+                    .filter(|s| {
+                        s.author_identity != my_identity && s.created_at > g.last_seen_at
+                    })
+                    .count();
+                out.push(json!({
+                    "namespace_id": g.namespace_id,
+                    "local_alias": g.local_alias,
+                    "created_locally": g.created_locally,
+                    "joined_at": g.joined_at,
+                    "last_seen_at": g.last_seen_at,
+                    "latest_share_at": latest_share_at,
+                    "unread_count": unread_count,
+                }));
+            }
+            // Sort by latest activity desc, falling back to joined_at.
+            out.sort_by(|a, b| {
+                let a_latest = a["latest_share_at"].as_u64().unwrap_or(0);
+                let b_latest = b["latest_share_at"].as_u64().unwrap_or(0);
+                let a_joined = a["joined_at"].as_u64().unwrap_or(0);
+                let b_joined = b["joined_at"].as_u64().unwrap_or(0);
+                b_latest
+                    .cmp(&a_latest)
+                    .then_with(|| b_joined.cmp(&a_joined))
+            });
+            Ok(serde_json::to_value(out)?)
+        }
+
+        "groups_mark_seen" => {
+            #[derive(Deserialize)]
+            struct P {
+                name_or_id: String,
+            }
+            let p: P = serde_json::from_value(params)?;
+            let g = state
+                .groups
+                .write()
+                .await
+                .mark_seen(&p.name_or_id, shmark_core::now_secs())?;
+            Ok(serde_json::to_value(g)?)
         }
 
         "groups_share_code" => {
@@ -364,15 +415,16 @@ pub async fn dispatch(method: &str, params: Value, state: &AppState) -> Result<V
                 imported_aliases.push(gt.local_alias.clone());
             }
 
-            // Tell the daemon to shut down so the in-process state (which
-            // still holds the old identity in Arc<Identity>) is replaced on
-            // next launch.
-            state.signal_shutdown();
+            // Ask the host (shmark-tauri or shmark-cli foreground) to
+            // re-bootstrap the in-memory AppState so callers can keep
+            // working without an external process restart. The new
+            // identity is already on disk; reload picks it up.
+            state.signal_reload();
 
             Ok(json!({
                 "identity_pubkey": resp.identity_pubkey_hex,
                 "imported_groups": imported_aliases,
-                "restart_required": true,
+                "reload_requested": true,
             }))
         }
 

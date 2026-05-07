@@ -32,6 +32,10 @@ pub struct AppState {
     pub pairing: Arc<PairingHost>,
     /// Local-only contact list + routing notes. Never replicated to peers.
     pub contacts: Arc<RwLock<Contacts>>,
+    /// Fired by RPCs that mutate on-disk identity / device state and need
+    /// the daemon to re-bootstrap to pick up the new state without an
+    /// external restart. Used by `devices_pair_join`.
+    pub reload_requested: Arc<Notify>,
 }
 
 impl AppState {
@@ -91,6 +95,7 @@ impl AppState {
             dev_tx,
             pairing,
             contacts: Arc::new(RwLock::new(contacts)),
+            reload_requested: Arc::new(Notify::new()),
         })
     }
 
@@ -100,5 +105,9 @@ impl AppState {
 
     pub fn signal_settings_changed(&self) {
         self.settings_changed.notify_waiters();
+    }
+
+    pub fn signal_reload(&self) {
+        self.reload_requested.notify_waiters();
     }
 }
